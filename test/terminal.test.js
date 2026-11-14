@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseKeys } from '../src/keys.js';
-import { Screen, detectDepth, fitCols, renderLines, rgbTo256 } from '../src/terminal.js';
+import { TEXT_TUNING, Screen, backdrop, composeLines, detectDepth, fitBox, fitCols, halfBlockLines, rgbTo256 } from '../src/terminal.js';
 
 describe('fitCols', () => {
   it('is limited by terminal height for a portrait reel', () => {
@@ -15,14 +15,33 @@ describe('fitCols', () => {
     assert.equal(fitCols({ termCols: 200, termRows: 100, srcW: 9, srcH: 16, maxCols: 50 }), 50);
     assert.equal(fitCols({ termCols: 200, termRows: 2, srcW: 9, srcH: 16 }), 8);
   });
-  it('fits landscape sources by width', () => {
-    assert.equal(fitCols({ termCols: 100, termRows: 50, srcW: 16, srcH: 9 }), 100);
-  });
   it('the resulting height really fits: rows <= available', () => {
     for (const [srcW, srcH] of [[9, 16], [1, 1], [16, 9], [3, 4]]) {
       const cols = fitCols({ termCols: 300, termRows: 31, srcW, srcH });
       const rows = Math.max(1, Math.round((srcH / srcW) * cols * 0.5));
       assert.ok(rows <= 30, `${srcW}x${srcH}: ${rows} rows from ${cols} cols`);
+    }
+  });
+});
+
+describe('fitBox', () => {
+  it('fits a portrait picture into a wide area by height, keeping its aspect ratio', () => {
+    const b = fitBox({ availCols: 110, availRows: 45, srcW: 600, srcH: 1068, cellW: 10, cellH: 20 });
+    assert.equal(b.rows, 45);
+    assert.equal(b.pxH, 900);
+    assert.ok(Math.abs(b.pxW / b.pxH - 600 / 1068) < 0.002);
+    assert.equal(b.cols, Math.round(b.pxW / 10));
+  });
+  it('fits a landscape picture by width', () => {
+    const b = fitBox({ availCols: 80, availRows: 60, srcW: 1600, srcH: 900, cellW: 10, cellH: 20 });
+    assert.equal(b.cols, 80);
+    assert.equal(b.pxW, 800);
+    assert.ok(b.rows <= 60);
+  });
+  it('never returns more cells than are available', () => {
+    for (const [c, r, w, h] of [[10, 10, 5000, 100], [3, 40, 100, 5000], [200, 3, 100, 100]]) {
+      const b = fitBox({ availCols: c, availRows: r, srcW: w, srcH: h });
+      assert.ok(b.cols >= 1 && b.cols <= c && b.rows >= 1 && b.rows <= r, JSON.stringify(b));
     }
   });
 });
@@ -52,43 +71,161 @@ describe('rgbTo256', () => {
   });
 });
 
-describe('renderLines', () => {
-  const grid = { cols: 3, lines: ['a b', ' c '], rgb: Buffer.from([10, 20, 30, 0, 0, 0, 40, 50, 60, 0, 0, 0, 70, 80, 90, 0, 0, 0]) };
+describe('backdrop', () => {
+  it('follows the app\'s background modes', () => {
+    assert.deepEqual(backdrop({ bgMode: 'dark' }), [13, 13, 18]);
+    assert.deepEqual(backdrop({ bgMode: 'black' }), [0, 0, 0]);
+    assert.deepEqual(backdrop({ bgMode: 'paper' }), [242, 239, 232]);
+    assert.deepEqual(backdrop({ bgMode: 'custom', bgColor: '#FF8800' }), [255, 136, 0]);
+    assert.equal(backdrop({ bgMode: 'transparent' }), null);
+  });
+});
+
+describe('composeLines', () => {
+  // 2 columns x 1 row. Cell 0: glyph 'a' (red-ish); cell 1: blank.
+  const grid = (extra = {}) => ({
+    cols: 2,
+    rows: 1,
+    kind: 'ramp',
+    lines: ['a '],
+    fg: Buffer.from([200, 10, 20, 0, 0, 0]),
+    alpha: Buffer.from([255, 255]),
+    bg: null,
+    tint: Buffer.from([100, 100, 100, 50, 60, 70]),
+    ...extra,
+  });
+  const base = { bgMode: 'black', overlay: false, underlay: 100, glyphOpacity: 100, brightness: 0, contrast: 0, gamma: 1, vignette: 0, scanlines: 0, grain: 0, flicker: 0, animate: false, colorMode: 'source' };
 
   it('plain mode trims trailing blanks and has no escapes', () => {
-    const out = renderLines({ ...grid, lines: ['a  ', ' c '] }, 'none');
-    assert.deepEqual(out, ['a', ' c']);
-    assert.ok(!out.join('').includes('\x1b'));
+    assert.deepEqual(composeLines(grid(), base, { depth: 'none' }), ['a']);
   });
-  it('truecolor mode colours glyphs, not blanks, and resets at the end of a line', () => {
-    const [first, second] = renderLines(grid, 'truecolor');
-    // row 0: 'a' (10,20,30), a blank (no escape), 'b' (40,50,60)
-    assert.equal(first, '\x1b[38;2;10;20;30ma \x1b[38;2;40;50;60mb\x1b[0m');
-    // row 1: a leading blank, 'c' (70,80,90), a trailing blank
-    assert.equal(second, ' \x1b[38;2;70;80;90mc \x1b[0m');
+
+  it('without the image underneath: glyph colour on the app\'s backdrop, blanks carry the backdrop too', () => {
+    const [line] = composeLines(grid(), base, { depth: 'truecolor' });
+    // 'a': bg black + fg (200,10,20); the blank reuses the same bg (no new escape), then reset
+    assert.equal(line, '\x1b[48;2;0;0;0;38;2;200;10;20ma \x1b[0m');
   });
-  it('does not repeat an escape for identical neighbouring colours', () => {
-    const same = { cols: 3, lines: ['abc'], rgb: Buffer.from([5, 5, 5, 5, 5, 5, 5, 5, 5]) };
-    const [line] = renderLines(same, 'truecolor');
-    assert.equal(line.match(/\x1b\[38;2;/g).length, 1);
+
+  it('a transparent backdrop leaves the terminal background alone', () => {
+    const [line] = composeLines(grid(), { ...base, bgMode: 'transparent' }, { depth: 'truecolor' });
+    assert.equal(line, '\x1b[38;2;200;10;20ma \x1b[0m');
+    assert.ok(!line.includes('48;'));
   });
-  it('256 mode emits 38;5;n codes', () => {
-    const [line] = renderLines({ cols: 1, lines: ['x'], rgb: Buffer.from([255, 0, 0]) }, '256');
-    assert.ok(line.includes('\x1b[38;5;196mx'));
+
+  it('keeping the image underneath tints every cell with the picture\'s own colour', () => {
+    const [line] = composeLines(grid(), { ...base, overlay: true, underlay: 100, glyphOpacity: 0 }, { depth: 'truecolor' });
+    // underlay 100 -> background is the picture colour; glyph opacity 0 -> glyph takes the background colour
+    assert.match(line, /48;2;100;100;100/);
+    assert.match(line, /48;2;50;60;70/);
+    assert.match(line, /38;2;100;100;100ma/);
   });
-  it('falls back to plain text when there is no colour data', () => {
-    assert.deepEqual(renderLines({ cols: 2, lines: ['ab'], rgb: null }, 'truecolor'), ['ab']);
+
+  it('underlay 0 shows only the backdrop even with the overlay on', () => {
+    const out = composeLines(grid(), { ...base, overlay: true, underlay: 0 }, { depth: 'truecolor' })[0];
+    assert.ok(!/48;2;(100;100;100|50;60;70)/.test(out));
+  });
+
+  it('letter tiles draw their own colour behind the letter', () => {
+    const tiles = grid({ kind: 'tiles', bg: Buffer.from([10, 200, 30, 255, 0, 0, 0, 0]) });
+    const [line] = composeLines(tiles, base, { depth: 'truecolor' });
+    assert.match(line, /48;2;10;200;30;38;2;200;10;20ma/);
+  });
+
+  // Background red channel of every visible cell, tracking escapes the way a terminal would.
+  const cellBgs = (line) => {
+    const out = [];
+    let cur = null;
+    for (const part of line.split(/(\x1b\[[0-9;]*m)/)) {
+      const m = /^\x1b\[([0-9;]*)m$/.exec(part);
+      if (m) {
+        const bg = /(?:^|;)48;2;(\d+);/.exec(m[1]);
+        if (bg) cur = Number(bg[1]);
+      } else out.push(...Array.from(part, () => cur));
+    }
+    return out;
+  };
+
+  it('vignette darkens the corners and leaves the centre alone', () => {
+    const w = 9;
+    const g = { cols: w, rows: 9, kind: 'ramp', lines: Array(9).fill(' '.repeat(w)), fg: Buffer.alloc(w * 9 * 3), alpha: Buffer.alloc(w * 9, 255), bg: null, tint: Buffer.alloc(w * 9 * 3, 200) };
+    const out = composeLines(g, { ...base, overlay: true, underlay: 100, vignette: 100 }, { depth: 'truecolor' });
+    const corner = cellBgs(out[0])[0];
+    const centre = cellBgs(out[4])[4];
+    assert.equal(centre, 200, 'centre is untouched');
+    assert.ok(corner < centre * 0.6, `corner ${corner} should be much darker than centre ${centre}`);
+    assert.deepEqual(cellBgs(composeLines(g, { ...base, overlay: true, underlay: 100, vignette: 0 }, { depth: 'truecolor' })[0]), Array(w).fill(200), 'off means off');
+  });
+
+  it('scanlines dim every other row', () => {
+    const g = { cols: 1, rows: 2, kind: 'ramp', lines: [' ', ' '], fg: Buffer.alloc(6), alpha: Buffer.alloc(2, 255), bg: null, tint: Buffer.from([200, 200, 200, 200, 200, 200]) };
+    const [a, b] = composeLines(g, { ...base, overlay: true, underlay: 100, scanlines: 100 }, { depth: 'truecolor' });
+    const v = (l) => Number(l.match(/48;2;(\d+);/)[1]);
+    assert.ok(v(b) < v(a));
+  });
+
+  it('grain is deterministic for a given frame and moves when animated', () => {
+    const g = { cols: 4, rows: 1, kind: 'ramp', lines: ['    '], fg: Buffer.alloc(12), alpha: Buffer.alloc(4, 255), bg: null, tint: Buffer.alloc(12, 150) };
+    const s = { ...base, overlay: true, underlay: 100, grain: 80 };
+    assert.deepEqual(composeLines(g, s, { depth: 'truecolor', time: 0 }), composeLines(g, s, { depth: 'truecolor', time: 0 }));
+    assert.deepEqual(composeLines(g, s, { depth: 'truecolor', time: 0 }), composeLines(g, s, { depth: 'truecolor', time: 5 }), 'still when not animated');
+    const a = { ...s, animate: true };
+    assert.notDeepEqual(composeLines(g, a, { depth: 'truecolor', time: 0 }), composeLines(g, a, { depth: 'truecolor', time: 5 }));
+  });
+
+  it('keeps hue but takes glyph brightness from the picture (so letters do not wash it out)', () => {
+    const g = grid({ tint: Buffer.from([40, 40, 40, 0, 0, 0]), fg: Buffer.from([255, 255, 255, 0, 0, 0]) });
+    const [line] = composeLines(g, { ...base, overlay: true, underlay: 100, glyphOpacity: 100 }, { depth: 'truecolor' });
+    const fg = line.match(/38;2;(\d+);(\d+);(\d+)m/).slice(1).map(Number);
+    // dark picture -> dim letter, far below the engine's always-bright 255
+    assert.ok(fg[0] < 120, `letter is ${fg}`);
+    assert.ok(TEXT_TUNING.gain > 1 && TEXT_TUNING.strength < 1);
+  });
+
+  it('fromCol leaves the columns to its left for the caller (Compare draws the original there)', () => {
+    const g = { cols: 4, rows: 1, kind: 'ramp', lines: ['abcd'], fg: Buffer.alloc(12, 100), alpha: Buffer.alloc(4, 255), bg: null, tint: null };
+    const [all] = composeLines(g, base, { depth: 'truecolor' });
+    const [right] = composeLines(g, base, { depth: 'truecolor', fromCol: 2 });
+    assert.equal(all.replace(/\x1b\[[0-9;]*m/g, ''), 'abcd');
+    assert.equal(right.replace(/\x1b\[[0-9;]*m/g, ''), 'cd');
+  });
+
+  it('256 mode emits 38;5;n / 48;5;n codes', () => {
+    const [line] = composeLines(grid(), base, { depth: '256' });
+    assert.match(line, /48;5;\d+;38;5;\d+ma/);
+  });
+
+  it('does not repeat an escape while neighbouring cells share their colours', () => {
+    const g = { cols: 3, rows: 1, kind: 'ramp', lines: ['abc'], fg: Buffer.from([5, 5, 5, 5, 5, 5, 5, 5, 5]), alpha: Buffer.alloc(3, 255), bg: null, tint: null };
+    const [line] = composeLines(g, base, { depth: 'truecolor' });
+    assert.equal(line.match(/\x1b\[/g).length, 2); // one colour change + the final reset
+  });
+});
+
+describe('halfBlockLines', () => {
+  const px = (rgbs) => Buffer.from(rgbs.flatMap(([r, g, b]) => [r, g, b, 255]));
+  it('shows two pixels per cell: top as the glyph colour, bottom as the background', () => {
+    const lines = halfBlockLines(px([[1, 2, 3], [4, 5, 6]]), 1, 2, 'truecolor');
+    assert.deepEqual(lines, ['\x1b[38;2;1;2;3;48;2;4;5;6m▀\x1b[0m']);
+  });
+  it('halves the height', () => {
+    assert.equal(halfBlockLines(Buffer.alloc(4 * 3 * 6), 3, 6, 'truecolor').length, 3);
+  });
+  it('plain mode falls back to a brightness ramp', () => {
+    const [dark] = halfBlockLines(px([[0, 0, 0], [0, 0, 0]]), 1, 2, 'none');
+    const [light] = halfBlockLines(px([[255, 255, 255], [255, 255, 255]]), 1, 2, 'none');
+    assert.equal(dark, ' ');
+    assert.equal(light, '@');
   });
 });
 
 describe('Screen', () => {
-  const fakeStream = (columns, rows) => {
+  const fake = (columns, rows) => {
     const writes = [];
     return { columns, rows, write: (s) => writes.push(s), writes };
   };
 
   it('enters and leaves the alternate screen and restores the cursor', () => {
-    const s = fakeStream(80, 24);
+    const s = fake(80, 24);
     const screen = new Screen(s);
     screen.enter();
     screen.leave();
@@ -97,40 +234,77 @@ describe('Screen', () => {
     assert.equal(s.writes.length, 2);
     assert.ok(s.writes[1].includes('\x1b[?25h') && s.writes[1].includes('\x1b[?1049l'));
   });
-  it('centres the frame, puts the HUD on the last row, and clears only when geometry changes', () => {
-    const s = fakeStream(20, 10);
+
+  it('positions text, batches a frame into one write, and skips rows that did not change', () => {
+    const s = fake(40, 10);
     const screen = new Screen(s);
-    screen.draw(['xxxx', 'yyyy'], 4, 'hud');
-    const first = s.writes[0];
-    // left pad (20-4)/2 = 8, top pad (9-2)/2 = 3 -> first row is screen row 4
-    assert.ok(first.includes('\x1b[4;1H') && first.includes(`${' '.repeat(8)}xxxx`));
-    assert.ok(first.includes('\x1b[10;1H')); // HUD row
-    assert.ok(first.includes('\x1b[2J'));
-    screen.draw(['xxxx', 'yyyy'], 4, 'hud');
-    assert.ok(!s.writes[1].includes('\x1b[2J'));
-    screen.draw(['xxxx'], 4, 'hud'); // height changed
-    assert.ok(s.writes[2].includes('\x1b[2J'));
+    screen.put(2, 5, 'hello');
+    screen.put(3, 5, 'world');
+    screen.flush();
+    assert.equal(s.writes.length, 1);
+    assert.ok(s.writes[0].includes('\x1b[3;6Hhello') || s.writes[0].includes('\x1b[3;6H\x1b[0mhello'));
+    assert.ok(s.writes[0].startsWith('\x1b[?2026h') && s.writes[0].endsWith('\x1b[?2026l'));
+
+    screen.put(2, 5, 'hello'); // unchanged
+    screen.put(3, 5, 'WORLD'); // changed
+    screen.flush();
+    assert.ok(!s.writes[1].includes('hello'));
+    assert.ok(s.writes[1].includes('WORLD'));
+
+    screen.put(2, 5, 'hello');
+    screen.put(3, 5, 'WORLD');
+    screen.flush(); // nothing changed: nothing written
+    assert.equal(s.writes.length, 2);
   });
-  it('never draws more rows than fit above the HUD', () => {
-    const s = fakeStream(10, 4);
-    new Screen(s).draw(['1', '2', '3', '4', '5'], 1, 'h');
-    const rowsDrawn = (s.writes[0].match(/\x1b\[\d+;1H/g) || []).length;
-    assert.equal(rowsDrawn, 3 + 1); // 3 picture rows + HUD
+
+  it('invalidate clears the screen and forces everything to be redrawn', () => {
+    const s = fake(40, 10);
+    const screen = new Screen(s);
+    screen.put(0, 0, 'x');
+    screen.flush();
+    screen.invalidate();
+    screen.put(0, 0, 'x');
+    screen.flush();
+    assert.ok(s.writes[1].includes('\x1b[2J'));
+    assert.ok(s.writes[1].includes('x'));
+  });
+
+  it('deletes Kitty images when it clears or leaves after drawing one', () => {
+    const s = fake(40, 10);
+    const screen = new Screen(s);
+    screen.enter();
+    screen.putRaw(0, 0, 'IMG', { image: true });
+    screen.flush();
+    screen.invalidate();
+    screen.flush();
+    assert.ok(s.writes.at(-1).includes('\x1b_Ga=d,d=A'));
+    screen.putRaw(0, 0, 'IMG', { image: true });
+    screen.flush();
+    screen.leave();
+    assert.ok(s.writes.at(-1).includes('\x1b_Ga=d,d=A') && s.writes.at(-1).includes('\x1b[?1049l'));
   });
 });
 
 describe('parseKeys', () => {
-  it('parses arrows, letters, space, quit', () => {
+  it('parses arrows, shifted arrows, letters (case kept), space, enter, tab, quit', () => {
     assert.deepEqual(parseKeys('\x1b[A'), ['up']);
     assert.deepEqual(parseKeys('\x1b[B'), ['down']);
-    assert.deepEqual(parseKeys('j'), ['j']);
-    assert.deepEqual(parseKeys('J'), ['j']);
-    assert.deepEqual(parseKeys(' '), ['space']);
+    assert.deepEqual(parseKeys('\x1b[1;2C'), ['S-right']);
+    assert.deepEqual(parseKeys('\x1b[1;5D'), ['C-left']);
+    assert.deepEqual(parseKeys('\x1bOB'), ['down']);
+    assert.deepEqual(parseKeys('jJ L'), ['j', 'J', 'space', 'L']);
+    assert.deepEqual(parseKeys('\t\r\x7f'), ['tab', 'enter', 'backspace']);
+    assert.deepEqual(parseKeys('\x1b[Z'), ['S-tab']);
+    assert.deepEqual(parseKeys('\x1b[3~\x1b[5~'), ['delete', 'pageup']);
     assert.deepEqual(parseKeys('\x03'), ['quit']);
-    assert.deepEqual(parseKeys('q'), ['q']);
   });
-  it('handles several keys in one chunk and a lone escape', () => {
+  it('handles several keys in one chunk, a lone escape, and drops unknown sequences', () => {
     assert.deepEqual(parseKeys('jj\x1b[Bk'), ['j', 'j', 'down', 'k']);
     assert.deepEqual(parseKeys('\x1b'), ['escape']);
+    assert.deepEqual(parseKeys('\x1b[99;99x'), []);
+  });
+  it('passes pasted text through, including non-ASCII', () => {
+    assert.deepEqual(parseKeys('#f8é'), ['#', 'f', '8', 'é']);
   });
 });
+

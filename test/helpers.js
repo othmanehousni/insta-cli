@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -126,4 +127,56 @@ export function discFrame({ w = 120, h = 213, disc = [255, 255, 255], bg = [0, 0
     }
   }
   return { kind: 'rgba', w, h, data: px.toString('base64') };
+}
+
+/** True when util-linux `script` is available (it gives a child a real pseudo-terminal). */
+export function canPty() {
+  if (process.platform !== 'linux') return false;
+  try {
+    execFileSync('script', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run the CLI inside a real pseudo-terminal of the given size and drive it with keys.
+ * Returns { output(), waitFor(pattern, {from, timeout}), send(keys), finish() }.
+ * `output()` is everything the program has printed so far, escape sequences included.
+ */
+export function runInPty(args, { cols = 110, rows = 40, env = {} } = {}) {
+  const quoted = args.map((a) => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ');
+  const child = spawn('script', ['-qfec', `stty cols ${cols} rows ${rows}; exec ${process.execPath} ${BIN} ${quoted}`, '/dev/null'], {
+    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', ...env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let out = '';
+  // Streaming UTF-8 decoders: a multi-byte character (▀, ·, …) split across two reads must not be corrupted.
+  const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
+  child.stdout.on('data', (d) => (out += decoders.stdout.write(d)));
+  child.stderr.on('data', (d) => (out += decoders.stderr.write(d)));
+  const closed = new Promise((resolve) => child.on('close', (code) => resolve(code)));
+  return {
+    output: () => out,
+    send: (keys) => child.stdin.write(keys),
+    /** Wait until `pattern` (string or RegExp) shows up in the output after offset `from`. */
+    async waitFor(pattern, { from = 0, timeout = 60_000 } = {}) {
+      const end = Date.now() + timeout;
+      for (;;) {
+        const hay = out.slice(from);
+        const hit = typeof pattern === 'string' ? hay.indexOf(pattern) : hay.search(pattern);
+        if (hit >= 0) return out.length;
+        if (Date.now() > end) throw new Error(`timed out waiting for ${pattern}\n--- output tail ---\n${JSON.stringify(out.slice(-600))}`);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    },
+    async finish({ quitKey = 'q', timeout = 20_000 } = {}) {
+      child.stdin.write(quitKey);
+      const code = await Promise.race([closed, new Promise((r) => setTimeout(() => r('timeout'), timeout))]);
+      if (code === 'timeout') child.kill('SIGKILL');
+      return code;
+    },
+    kill: () => child.kill('SIGKILL'),
+  };
 }

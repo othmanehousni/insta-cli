@@ -1,21 +1,36 @@
-/** Split a raw stdin chunk into key names. Unknown keys are ignored. */
+const CSI_FINAL = { A: 'up', B: 'down', C: 'right', D: 'left', H: 'home', F: 'end', Z: 'S-tab' };
+const CSI_TILDE = { 1: 'home', 3: 'delete', 4: 'end', 5: 'pageup', 6: 'pagedown', 7: 'home', 8: 'end' };
+
+/**
+ * Split a raw stdin chunk into key names: 'up' 'down' 'left' 'right' (with an 'S-' / 'C-' prefix when
+ * shifted / ctrl'd) 'home' 'end' 'pageup' 'pagedown' 'delete' 'tab' 'S-tab' 'enter' 'escape' 'space'
+ * 'backspace' 'quit' (Ctrl-C / Ctrl-D), or the character itself (case preserved). Unknown sequences are dropped.
+ */
 export function parseKeys(chunk) {
   const keys = [];
   const s = String(chunk);
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (ch === '\x1b') {
-      const seq = s.slice(i, i + 3);
-      if (seq === '\x1b[A') keys.push('up');
-      else if (seq === '\x1b[B') keys.push('down');
-      else if (seq === '\x1b[C') keys.push('right');
-      else if (seq === '\x1b[D') keys.push('left');
-      else if (s.length === 1) keys.push('escape');
-      i += seq.startsWith('\x1b[') ? 2 : 0;
+      const m = /^\x1b\[(\d+(?:;\d+)*)?([A-Za-z~])/.exec(s.slice(i));
+      if (m) {
+        const params = (m[1] ?? '').split(';').filter(Boolean).map(Number);
+        const mod = params.length > 1 ? params[params.length - 1] : 1; // 2 = shift, 5 = ctrl
+        const base = m[2] === '~' ? CSI_TILDE[params[0]] : CSI_FINAL[m[2]];
+        if (base) keys.push(`${mod === 2 && !base.startsWith('S-') ? 'S-' : mod === 5 ? 'C-' : ''}${base}`);
+        i += m[0].length - 1;
+      } else if (i === s.length - 1) {
+        keys.push('escape');
+      } else if (s[i + 1] === 'O' && /[A-D]/.test(s[i + 2] ?? '')) {
+        keys.push(CSI_FINAL[s[i + 2]]); // application-cursor-mode arrows
+        i += 2;
+      }
     } else if (ch === '\x03' || ch === '\x04') keys.push('quit'); // Ctrl-C / Ctrl-D
     else if (ch === ' ') keys.push('space');
     else if (ch === '\r' || ch === '\n') keys.push('enter');
-    else keys.push(ch.toLowerCase());
+    else if (ch === '\t') keys.push('tab');
+    else if (ch === '\x7f' || ch === '\b') keys.push('backspace');
+    else if (ch >= ' ') keys.push(ch);
   }
   return keys;
 }

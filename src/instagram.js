@@ -156,8 +156,11 @@ export async function openFeed(page, url, { onInstagram, log } = {}) {
   }
   try {
     await page.waitForFunction(
-      () => [...document.querySelectorAll('video')].some((v) => v.readyState >= 2 && v.videoWidth > 0),
-      null,
+      (stills) =>
+        [...document.querySelectorAll('video')].some((v) => v.readyState >= 2 && v.videoWidth > 0) ||
+        // on pages that are not Instagram a plain picture will do (the app's "upload an image" case)
+        (stills && [...document.querySelectorAll('img')].some((i) => i.complete && i.naturalWidth >= 200)),
+      !onInstagram,
       { timeout: 30_000 },
     );
   } catch {
@@ -214,7 +217,7 @@ export class Reels {
   async togglePause() {
     return this.page.evaluate(() => {
       const v = window.__insta_ascii_main;
-      if (!v) return null;
+      if (!v || v.tagName !== 'VIDEO') return null;
       if (v.paused) v.play().catch(() => {});
       else v.pause();
       return v.paused;

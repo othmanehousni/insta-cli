@@ -1,26 +1,42 @@
 # insta-ascii
 
 Your Instagram **Reels feed, in the terminal**. The CLI signs in to your account, opens the Reels
-page, and turns the playing video into ASCII, using the
-[Devault ASCII generator](https://devault-ascii.pages.dev/ascii-generator/app/) as the renderer.
+page, and renders the playing video with the
+[Devault ASCII generator](https://devault-ascii.pages.dev/ascii-generator/app/): its 13 styles, its
+preset looks and every one of its controls.
 
-One frame from the project's *test* feed (not Instagram content), printed with `--once --color none --cols 34`:
+![The same frame as the original, as the app's own canvas in the terminal (image mode), and as real characters (text mode)](docs/preview.jpg)
 
-```
-::::::::::::::::::::::::::::::::::
-::::::::::::::::----:::::::::::---
-::::::::::::://------\\::::-------
-:::::::::::///@@@@@@@@\\----------
-:::::::::::|/@@@@@@@@@@\|---------
-:::::::::::|@@@@@@@@@@@@|---------
-:::::::::::|\@@@@@@@@@@/|---------
-::::::::::--\\\@@@@@@///----------
-::::::--------\\----//------------
-::--------------------------------
-----------------------------------
-```
+<sub>One frame of a test video made from a NASA public-domain photograph (not Instagram content). Left to right:
+the original, `--render image`, `--render text`. Both renderings use the `photo` look.</sub>
 
-In the terminal it is live, coloured by default, and keyboard-driven.
+## What it looks like, and why
+
+There are three ways to draw, and all three come from the app's own engine:
+
+| `--render` | What you see | Works in |
+| --- | --- | --- |
+| `text` | **real characters**, true colour, each cell tinted with the picture under it | every terminal |
+| `image` | **the app's actual canvas** at pixel resolution: every style, every effect | terminals that show images: kitty, Ghostty (kitty protocol); iTerm2, WezTerm, mintty (iTerm2 protocol) |
+| `blocks` | that same canvas as half-block pixels | any truecolor terminal |
+
+`auto` (the default) picks `image` where the terminal can show it, otherwise `text`.
+
+The default look, **`photo`**, is the "realistic but still ASCII" one: the picture stays visible underneath
+detailed, true-colour letters. It uses the app's own *"Keep the image underneath"* feature. Raise **Image
+visibility** (`--set underlay=80`) for more photo, lower it for more ASCII. The other 18 looks are the app's own
+presets:
+
+![The app's looks, rendered by this CLI](docs/looks.jpg)
+
+### Resolution
+
+- **Image mode** is as sharp as the terminal's pixels (up to ~2400 px on a side) and draws up to 400 glyph
+  columns, versus ~45 for a portrait reel in plain letters. `--scale` raises or lowers it.
+- **Text mode** can never have more cells than the terminal has, so it gets its realism from colour instead:
+  every cell's background is the picture's colour. The letters are calibrated down for the terminal (a terminal
+  letter covers far more of its cell than the app's few-pixel glyphs do), found by comparing real renders at 1:1.
+  Braille (`--style braille`) packs 2×4 dots into each cell and is the most photographic text style.
 
 ## How it works
 
@@ -28,28 +44,26 @@ In the terminal it is live, coloured by default, and keyboard-driven.
  Chrome, signed in to Instagram ──► frame of the reel on screen
         (your saved session)                │
                                             ▼
-                      Devault ASCII generator (loaded from its hosted URL, run in a hidden tab)
-                                            │  glyph + colour for every cell
-                                            ▼
-                                    your terminal (ANSI colour)
+                Devault ASCII generator (loaded from its hosted URL, run in a hidden tab)
+                       │ glyph grid + colours                │ the app's own canvas
+                       ▼                                     ▼
+              text: real characters                image / blocks: pixels
+                       └──────────────► your terminal ◄──────┘
 ```
 
-- A real browser (Playwright, using your installed Chrome when there is one) logs in and plays the
-  reel, because reels live in Instagram's logged-in web app.
-- Each frame is read straight off the playing `<video>` (raw pixels, no image encoding). If the page
-  doesn't allow that, it falls back to screenshots of the video area; `--capture page` renders the
-  whole page instead.
-- The frame is handed to the **Devault ASCII generator**: the hosted app is loaded and its own engine
-  does the image-to-characters conversion, with the app's own settings (style, palette, colour mode,
-  outlines, invert). The app only paints a canvas and has no text export, so the CLI reads the glyph
-  grid from the engine it loads, with the same glyph-to-character mapping the app uses.
+- A real browser (Playwright, using your installed Chrome when there is one) logs in and plays the reel.
+- Each frame is read straight off the playing `<video>` as raw pixels (screenshots are the fallback;
+  `--capture page` renders the whole page).
+- The hosted app is loaded, its UI script is not run, and its **engine** does the conversion with the app's own
+  settings. It only paints a canvas and has no text export, so the CLI reads the glyph grid from the engine,
+  using the same glyph-to-character mapping the app uses for its own text output.
 
 ## Requirements
 
 - Node.js 18.17 or newer
 - Google Chrome, **or** run `npx playwright install chromium` once
 - Internet access (Instagram, and `devault-ascii.pages.dev` for the renderer)
-- A terminal with 24-bit colour for the best result (256-colour and plain output also work)
+- `ffmpeg` only if you want to record MP4s
 
 ## Install
 
@@ -66,20 +80,18 @@ npm link        # optional: puts `insta-ascii` on your PATH (otherwise use `node
 insta-ascii login
 ```
 
-You are asked for your username and password (the password is typed hidden and is never a flag, so it
-doesn't land in your shell history). For scripts, set `INSTAGRAM_USERNAME` and `INSTAGRAM_PASSWORD`
-instead. If Instagram asks for a two-factor code you will be prompted for it.
+You are asked for your username and password (typed hidden, and never a flag, so it doesn't land in your shell
+history). For scripts, set `INSTAGRAM_USERNAME` and `INSTAGRAM_PASSWORD`. If Instagram asks for a two-factor code
+you will be prompted for it.
 
 ```bash
 insta-ascii login --manual
 ```
 
-Opens a **visible browser window** and waits while you sign in yourself. Use this if Instagram
-challenges the automated login (security checks, captchas, "was this you?"). It is the most reliable
-way in. The session is saved to a private browser profile and reused by every later run.
-
-`insta-ascii logout` deletes that profile. `insta-ascii` on its own will also sign in for you if there
-is no valid session yet.
+Opens a **visible browser window** and waits while you sign in yourself. Use this if Instagram challenges the
+automated login (security checks, captchas, "was this you?"). It is the most reliable way in. The session is
+saved to a private browser profile and reused by every later run. `insta-ascii logout` deletes it, and a plain
+`insta-ascii` signs you in if there is no valid session yet.
 
 ## Watch
 
@@ -89,76 +101,124 @@ insta-ascii
 
 | Key | Action |
 | --- | --- |
-| `j` / `↓` | next reel |
-| `k` / `↑` | previous reel |
+| `j` / `↓`, `k` / `↑` | next / previous reel |
 | `space` | pause / resume |
-| `s` | cycle style: classic, detailed, blocks, minimal, binary, braille |
-| `c` | cycle colour: source, palette, mono, none |
-| `p` | cycle the app's palettes (devault, phosphor, amber, ice, sunset, cyber, mono) |
-| `e` | toggle the app's outline glyphs (off is faster) |
-| `i` | invert brightness (for light terminal backgrounds) |
+| `Tab` (or `m`) | the **settings panel**: every control of the app (below) |
+| `l` / `L` | next / previous look |
+| `v` | cycle text / blocks / image rendering |
+| `o`, then `[` `]` | **Compare** with the original; move the divider |
+| `x` | save the app's canvas as a PNG (and the text as `.txt`) to `~/.insta-ascii/shots` |
+| `r` | start / stop recording an **MP4** (needs ffmpeg) |
+| `s` `c` `p` `e` `i` | cycle style · colour · palette · outlines · invert |
+| `+` / `-` | more / less detail |
 | `q` | quit |
 
-The picture is as large as fits your terminal (a reel is portrait, so height is usually the limit) and
-re-fits when you resize the window.
+In the settings panel: `↑↓` select, `←→` change (`⇧←→` ×10), `Enter` edits text and colour fields, `d` resets a
+control to the app's default, `Tab` closes. It shows the same sections the app shows for the current style and
+hides what the app would hide (for example, edge strength only appears while "Trace edges" is on).
 
-### Options
+## Everything the app offers
+
+| In the app | Here |
+| --- | --- |
+| 13 styles: classic, detailed, blocks, tiles, minimal, binary, braille, dots, dither, bricks, particle, film, custom | `--style`, `s`, or the panel; `insta-ascii --list styles` |
+| the preset **looks** rail (18 looks) | `--look <id>`, `l` / `L`; `--list looks`. Their settings are read from the live app, not copied |
+| every slider, switch and choice (all 52 controls: detail, spacing, tile gaps, particles, film, tone, colour, background, contours, effects…) | the panel, or `--set key=value` for any of them; `--list settings` shows keys, ranges and defaults |
+| palettes (7), colour modes (original / palette / mono), background modes (dark / black / paper / custom / clear) | `--palette`, `--color`, `--set bgMode=paper`, … |
+| effects: bloom, scanlines, curvature, chromatic aberration, vignette, grain, flicker, twinkle, animate | panel or `--set`. **Bloom, curvature and chromatic aberration are pixel effects**: image / blocks rendering only. Vignette, scanlines, grain and flicker are also emulated per cell in text |
+| particle and film styles | image / blocks only (they are not made of characters). In text rendering the CLI switches to blocks for you |
+| "Keep the image underneath", Compare | yes (text, image and blocks) |
+| Export image / video | `x` and `--once --out file.png` (PNG at export resolution); `r` records an MP4 |
+| Upload / Sample | `--file photo.jpg` or `--file clip.mp4`; `--url` for any page |
+
+`--set` examples: `--set underlay=70 --set glyphOpacity=80`, `--set bgMode=paper`, `--set bloom=40 --set scanlines=30`,
+`--style custom --ramp " .oO@"`.
+
+**Not ported, deliberately:** the site's Library link and account menu, the scrub bar (a live feed has none),
+the immersive view (a terminal is already full-screen), JPEG/WebP and 720p/1080p/4K export choices (stills are PNG
+at 1920 px on the long side, recordings 1280 px), and audio.
+
+## Options
 
 | Option | Meaning | Default |
 | --- | --- | --- |
-| `-s, --style <name>` | `classic` `detailed` `blocks` `minimal` `binary` `braille` | `classic` |
-| `--ramp <chars>` | your own character ramp, light to dense, e.g. `" .:-=+*#%@"` | |
-| `-c, --color <mode>` | `source` (the video's colours), `palette`, `mono`, `none` | `source` |
-| `--palette <name>` | the app's palette, used with `--color palette` | `devault` |
-| `--no-edges` | turn off the app's outline glyphs | outlines on |
-| `--invert` | invert brightness | off |
-| `-w, --cols <n>` | maximum columns | fit the terminal |
+| `--look <id>` | start from a look (`insta-ascii --list looks`) | `photo` |
+| `-s, --style <id>` | any of the 13 styles | the look's |
+| `--ramp <chars>` | your own ramp, light to dense | |
+| `-c, --color <mode>` | `source` `palette` `mono` `none` (none = plain text) | the look's |
+| `--palette <id>` | the app's palette | the look's |
+| `--no-edges` · `--invert` | outline tracing off · invert brightness | |
+| `-w, --cols <n>` | Detail (columns), 20–400. In text it is also capped by what fits the terminal | the look's |
+| `--set <key=value>` | any app setting, repeatable | |
+| `--list <what>` | `looks` `styles` `palettes` `settings`, then exit | |
+| `--render <mode>` | `auto` `text` `image` `blocks` | `auto` |
+| `--graphics <proto>` | `auto` `kitty` `iterm2` | `auto` |
+| `--scale <n>` | image resolution multiplier, 0.2–3 | `1` |
 | `--depth <mode>` | `auto` `truecolor` `256` `none` (`NO_COLOR` is respected) | `auto` |
 | `--fps <n>` | frame-rate cap | `15` |
 | `--capture <what>` | `video` (the reel) or `page` (the whole viewport) | `video` |
 | `--once` | print one frame to stdout and exit (no terminal needed) | |
-| `--url <url>` | open another page instead of `instagram.com/reels/` | |
+| `--out <file.png>` | with `--once`: also save the app's canvas as a PNG | |
+| `--file <path>` · `--url <url>` | a local image or video · any page, instead of Reels | |
 | `-u, --username <name>` | Instagram username | `INSTAGRAM_USERNAME` or prompt |
 | `--browser <name>` | `auto` `chrome` `chromium` | `auto` |
-| `--headed` | show the browser window | headless |
-| `--software-gl` | allow software WebGL (headless machines without a GPU) | off |
+| `--headed` · `--software-gl` | show the browser · allow software WebGL (headless, no GPU) | off |
 | `--app-url <url>` | the ASCII generator app | the Devault URL |
 | `--debug` | verbose logging; saves a screenshot on failure | off |
 
-Run `insta-ascii --help` for the same list. Only the styles that are made of characters can be drawn
-in a terminal; the app's picture-only looks (dots, bricks, particles, film, tiles) are not offered.
+Run `insta-ascii --help` for the same list.
+
+### Which terminal?
+
+- **kitty, Ghostty:** `--render image` just works (kitty graphics protocol).
+- **iTerm2, WezTerm, mintty:** `--render image` just works (iTerm2 inline images).
+- **VS Code's terminal:** supports the iTerm2 protocol only if *"terminal.integrated.enableImages"* is on, and a silent blank
+  picture is worse than text, so it is never picked automatically: `--graphics iterm2` to opt in.
+- **tmux / screen:** they swallow image sequences, so rendering falls back to text. `--render blocks` also works.
+- **Apple Terminal, GNOME Terminal, Windows Terminal, …:** text (best with truecolor) or `--render blocks`.
+  **Sixel is not supported.**
 
 ## Privacy and security
 
-- **Your session** lives in a browser profile at `~/.insta-ascii/profile` (override with
-  `INSTA_ASCII_HOME`), created readable by you only. Treat it like a password. `insta-ascii logout`
-  removes it, and refuses to delete a directory it didn't create.
-- **The renderer tab is locked down.** The hosted app is allowed to make `GET` requests to its own
-  files and nothing else. This matters because the app's own Content-Security-Policy *permits*
-  connections to its auth and stats services and to Google sign-in. Frames from your feed can't be
-  sent to any of those, or anywhere. The app's UI script is not run at all; only its engine is.
-- `--debug` saves screenshots under `~/.insta-ascii/debug`; they can show account details, so delete
-  them when you are done.
-- This tool has no telemetry of its own. (The browser talks to Instagram, of course, and loads the
-  renderer's files from the Devault site.)
+- **Your session** lives in a browser profile at `~/.insta-ascii/profile` (override with `INSTA_ASCII_HOME`), created
+  readable by you only. Treat it like a password. `insta-ascii logout` removes it, and refuses to delete a
+  directory it didn't create.
+- **The renderer tab is locked down.** The hosted app is allowed to make `GET` requests to its own files and nothing
+  else. This matters because the app's own Content-Security-Policy *permits* connections to its auth and stats
+  services and to Google sign-in. Frames from your feed can't be sent to any of those, or anywhere. The app's UI
+  script is not run at all; only its engine is.
+- Saved stills and recordings go to `~/.insta-ascii/shots` (private folder). `--debug` screenshots go to
+  `~/.insta-ascii/debug`; they can show account details, so delete them when you are done.
+- This tool has no telemetry of its own. (The browser talks to Instagram, of course, and loads the renderer's files
+  from the Devault site.)
 
 ## Limitations, honestly
 
-- **Instagram's terms** don't allow automated access, and automated sign-ins from a headless browser
-  are more likely to be challenged than your normal browser. Use it with your own account, at your own
-  risk, and prefer `login --manual`.
-- **This was developed without an Instagram account to test against.** What was verified: the live
-  Devault engine, the full CLI and interactive viewer in a real pseudo-terminal, reel navigation, pause,
-  the screenshot fallback for cross-origin video, and the login flow (password, wrong password,
-  two-factor, security challenge, manual) against a local stand-in whose form fields match the real login
-  page (`email` / `pass`, checked against the live page). **Not verified:** Instagram's real post-login
-  pages, 2FA form, and reels markup. Those can change at any time. If something doesn't work, run with
-  `--debug --headed` to see what the page is showing.
+- **Instagram's terms** don't allow automated access, and automated sign-ins from a headless browser are more
+  likely to be challenged than your normal browser. Use it with your own account, at your own risk, and prefer
+  `login --manual`.
+- **This was developed without an Instagram account to test against.** Verified: the live Devault engine, every
+  style and look, the whole CLI and the interactive viewer in a real pseudo-terminal, reel navigation, pause,
+  the screenshot fallback for cross-origin video, and the login flow (password, wrong password, two-factor,
+  security challenge, manual) against a local stand-in whose form fields match the real login page (`email` /
+  `pass`, checked against the live page). **Not verified:** Instagram's real post-login pages, 2FA form and reels
+  markup. Those can change at any time. If something doesn't work, run with `--debug --headed`.
+- **The image protocols were checked at the byte level, not on screen.** I had no kitty, Ghostty, iTerm2 or WezTerm
+  to look at: the tests decode what the CLI sends back into the original image and check the protocol framing
+  against the specifications, but a real terminal may still behave differently. If a picture doesn't appear,
+  `--render text` is the safe fallback.
+- **Speed depends on a GPU.** Text rendering costs about 70 ms a frame here. Image and blocks rendering run on the
+  browser's WebGL: with no GPU (this was developed in one such environment) the heavy looks take ~700 ms a frame at
+  full size, so the viewer **lowers the image resolution automatically** to keep up with `--fps` (the HUD shows the
+  percentage), reaching ~8 fps at 30 %. With a GPU the render itself should be far faster, but I could not measure
+  that. `--scale` sets the maximum resolution.
+- Text rendering draws 11 of the 13 styles; `film` and `particle` need pixels. Text mode ignores the app's font,
+  letter spacing and non-normal blend modes (the terminal chooses its own font), and does not do bloom, curvature or
+  chromatic aberration.
 - The reels page is driven like a person would: arrow keys, with the mouse wheel as a fallback.
 - **No audio**: it's a picture in a terminal.
-- If the Devault app is redesigned, the engine may not be found; the CLI says so instead of guessing.
-- Frame rate depends on your machine and the outline setting (`e` / `--no-edges` is faster); `--fps`
-  caps it.
+- If the Devault app is redesigned, the engine may not be found, or the catalog here may drift; the CLI says so
+  instead of guessing, and the test suite compares this CLI's catalog with the live app.
 
 ## Development
 
@@ -166,21 +226,27 @@ in a terminal; the app's picture-only looks (dots, bricks, particles, film, tile
 npm test
 ```
 
-Covers: terminal rendering and key parsing (pure unit tests); the allow/block decision for the renderer
-tab; the bridge to the **live** Devault app (grid shape, colours, braille/blocks/custom ramps, outlines,
-lockdown, skipped if the app can't be reached); the CLI end to end against a local reels feed
-(`--once`, colour depths, `--capture page`, argument errors); feed navigation and pause; the
-cross-origin-video fallback (needs `ffmpeg`, skipped without); the login state machine against a mock
-login server; and profile storage and `logout` safety.
+186 tests, about a minute and a half. Pure units: terminal composition, fitting, key parsing,
+settings and the panel, the Kitty / iTerm2 encoders, export. Against the **live** Devault app (skipped if it can't be
+reached): that the catalog here matches the app's styles, palettes, looks and defaults; every text style's character
+set; **all 13 styles and all 19 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG
+sizes; Compare; the network lockdown. End to end: the CLI against a local reels feed and local media, and the
+interactive viewer in a **real pty** (needs `script`), including both image protocols. Also the login state machine
+against a mock login server, the cross-origin-video fallback and real `ffmpeg` recording (needs `ffmpeg`).
 
 ```
 bin/insta-ascii.js   entry point
 src/cli.js           flags, commands, login orchestration, --once
-src/viewer.js        the live loop and keys
-src/instagram.js     login, session check, feed navigation
-src/capture.js       getting frames out of the page
+src/viewer.js        the live loop, keys, adaptive resolution
+src/settings.js      the app's controls as data; looks; --set parsing; --list
+src/panel.js         the settings sidebar
 src/ascii.js         the bridge to the Devault app (+ network lockdown)
 src/engine-page.js   code that runs inside the app's page
-src/terminal.js      colour, fitting, full-screen drawing
+src/terminal.js      composing cells (tint, effects), fitting, half-blocks, full-screen drawing
+src/protocols.js     Kitty / iTerm2 image protocols, terminal detection, cell size
+src/export.js        PNG stills and MP4 recording
+src/instagram.js     login, session check, feed navigation
+src/capture.js       getting frames out of the page
 test/                unit, integration and end-to-end tests, plus a mock feed and mock login
+docs/                the images above (rendered from a public-domain NASA photograph)
 ```

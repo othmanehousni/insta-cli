@@ -8,24 +8,38 @@
 
 /**
  * Runs INSIDE the reels page (serialised by Playwright, so it must stay self-contained).
- * Finds the <video> that covers the most viewport area and optionally grabs a frame from it.
+ * Finds the main media (the <video> covering the most viewport area, else the biggest image or canvas)
+ * and optionally grabs a frame from it.
  */
 export function inspectMainVideo({ grabWidth }) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  let best = null;
-  let bestArea = 0;
-  for (const v of document.querySelectorAll('video')) {
-    if (v.readyState < 2 || !v.videoWidth) continue;
-    const r = v.getBoundingClientRect();
-    const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
-    const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
-    if (w * h > bestArea) {
-      best = v;
-      bestArea = w * h;
+  // Source size and readiness of a media element. Videos win; stills (img / canvas) are the fallback.
+  const dims = (el) =>
+    el.tagName === 'VIDEO'
+      ? [el.videoWidth, el.videoHeight, el.readyState >= 2]
+      : el.tagName === 'IMG'
+        ? [el.naturalWidth, el.naturalHeight, el.complete]
+        : [el.width, el.height, true];
+  const pick = (selector) => {
+    let found = null;
+    let area = 0;
+    for (const el of document.querySelectorAll(selector)) {
+      const [mw, mh, ready] = dims(el);
+      if (!ready || !mw || !mh) continue;
+      const r = el.getBoundingClientRect();
+      const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+      const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      if (w * h > area) {
+        found = el;
+        area = w * h;
+      }
     }
-  }
+    return found;
+  };
+  const best = pick('video') || pick('img, canvas');
   if (!best) return { ok: false, reason: 'no-video' };
+  const [mediaW, mediaH] = dims(best);
   window.__insta_ascii_main = best; // lets pause/resume act on the same element
 
   window.__insta_ascii_ids = window.__insta_ascii_ids || { n: 0 };
@@ -33,10 +47,10 @@ export function inspectMainVideo({ grabWidth }) {
   const r = best.getBoundingClientRect();
   const info = {
     ok: true,
-    id: `${best.__iaId}|${best.currentSrc || ''}`,
-    paused: best.paused,
-    videoW: best.videoWidth,
-    videoH: best.videoHeight,
+    id: `${best.__iaId}|${best.currentSrc || best.src || ''}`,
+    paused: best.tagName === 'VIDEO' ? best.paused : false,
+    videoW: mediaW,
+    videoH: mediaH,
     rect: {
       x: Math.max(0, r.left),
       y: Math.max(0, r.top),
@@ -46,8 +60,8 @@ export function inspectMainVideo({ grabWidth }) {
   };
   if (!grabWidth) return info;
 
-  const w = Math.max(16, Math.min(grabWidth, best.videoWidth));
-  const h = Math.max(16, Math.round((w * best.videoHeight) / best.videoWidth));
+  const w = Math.max(16, Math.min(grabWidth, mediaW));
+  const h = Math.max(16, Math.round((w * mediaH) / mediaW));
   try {
     const canvas = (window.__insta_ascii_canvas = window.__insta_ascii_canvas || document.createElement('canvas'));
     canvas.width = w;

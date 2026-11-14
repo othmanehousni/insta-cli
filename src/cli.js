@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { AsciiBridge, DEFAULT_APP_URL, engineSettings } from './ascii.js';
+import { AsciiBridge, DEFAULT_APP_URL, flagSettings } from './ascii.js';
 import { launchSession } from './browser.js';
 import { FrameSource } from './capture.js';
 import {
@@ -17,9 +18,22 @@ import {
 } from './instagram.js';
 import { promptHidden, promptLine } from './keys.js';
 import { debugDir, ensurePrivateDir, ensureProfileDir, homeDir, removeProfile } from './paths.js';
-import { detectDepth, fitCols, renderLines } from './terminal.js';
+import { saveStill } from './export.js';
+import {
+  DEFAULT_LOOK,
+  LOOK_IDS,
+  PALETTE_IDS,
+  PIXEL_ONLY_STYLES,
+  STYLE_IDS,
+  listing,
+  parseSetting,
+  resolveSettings,
+} from './settings.js';
+import { composeLines, detectDepth, fitCols, halfBlockLines } from './terminal.js';
 import { FriendlyError, UsageError, makeLogger } from './util.js';
-import { COLORS, PALETTES, STYLES, runViewer } from './viewer.js';
+import { runViewer } from './viewer.js';
+
+const COLORS = ['source', 'palette', 'mono', 'none'];
 
 const VERSION = '0.1.0';
 
@@ -29,27 +43,42 @@ Usage
   insta-ascii [reels] [options]     watch the Reels feed (default command)
   insta-ascii login [--manual]      sign in and remember the session
   insta-ascii logout                forget the saved session
+  insta-ascii --list <what>         looks | styles | palettes | settings
 
 Keys while watching
   j / ↓   next reel          k / ↑   previous reel       space   pause / resume
-  s       cycle style        c       cycle colour mode   p       cycle palette
-  e       toggle outlines    i       invert              q       quit
+  Tab     settings panel     l / L   next / previous look
+  v       text / image / blocks rendering                 x       save a PNG (and .txt)
+  r       record an MP4 (needs ffmpeg)                    q       quit
+  o       compare with the original  ([ ] move the divider)
+  s style · c colour · p palette · e outlines · i invert · + / - detail
 
-Look
-  -s, --style <name>     ${STYLES.join(' | ')}   [classic]
+Look  (everything the Devault app offers: 13 styles, its preset looks and every slider)
+      --look <id>        start from a look [${DEFAULT_LOOK}]; ${LOOK_IDS.slice(0, 6).join(', ')}, … (see --list looks)
+  -s, --style <id>       ${STYLE_IDS.join(' | ')}
       --ramp <chars>     your own character ramp, light to dense, e.g. " .:-=+*#%@"
-  -c, --color <mode>     ${COLORS.join(' | ')}   [source]
-      --palette <name>   ${PALETTES.join(' | ')}   [devault] (with --color palette)
-      --no-edges         turn off the app's outline glyphs (faster)
-      --invert           invert brightness (light terminal backgrounds)
-  -w, --cols <n>         maximum columns (default: as many as fit the terminal)
+  -c, --color <mode>     ${COLORS.join(' | ')}   (none = plain text)
+      --palette <id>     ${PALETTE_IDS.join(' | ')}
+      --no-edges         turn off outline tracing
+      --invert           invert brightness
+  -w, --cols <n>         Detail (columns), 20-400
+      --set <key=value>  any app setting, repeatable: --set underlay=60 --set bloom=30 (see --list settings)
+
+Rendering
+      --render <mode>    auto | text | image | blocks   [auto: image where the terminal can show it, else text]
+                         text = real characters · image = the app's own canvas (every style and effect)
+                         blocks = that canvas as half-block pixels (any truecolor terminal)
+      --graphics <proto> auto | kitty | iterm2          image protocol (kitty, Ghostty / iTerm2, WezTerm)
+      --scale <n>        image resolution multiplier, 0.2-3   [1]
       --depth <mode>     auto | truecolor | 256 | none   [auto]
       --fps <n>          frame-rate cap   [15]
 
 Source
       --capture <what>   video (the reel) | page (the whole viewport)   [video]
       --url <url>        open another page instead of instagram.com/reels/
+      --file <path>      render a local image or video instead of Reels
       --once             print one frame to stdout and exit (no terminal needed)
+      --out <file.png>   with --once: also save the app's canvas as a PNG at export resolution
 
 Account & browser
   -u, --username <name>  Instagram username (else INSTAGRAM_USERNAME, else you are asked)
@@ -64,13 +93,21 @@ Account & browser
 `;
 
 const OPTIONS = {
-  style: { type: 'string', short: 's', default: 'classic' },
+  look: { type: 'string', default: DEFAULT_LOOK },
+  style: { type: 'string', short: 's' },
   ramp: { type: 'string' },
-  color: { type: 'string', short: 'c', default: 'source' },
-  palette: { type: 'string', default: 'devault' },
+  color: { type: 'string', short: 'c' },
+  palette: { type: 'string' },
   'no-edges': { type: 'boolean', default: false },
   invert: { type: 'boolean', default: false },
   cols: { type: 'string', short: 'w' },
+  set: { type: 'string', multiple: true },
+  list: { type: 'string' },
+  render: { type: 'string', default: 'auto' },
+  graphics: { type: 'string', default: 'auto' },
+  scale: { type: 'string', default: '1' },
+  file: { type: 'string' },
+  out: { type: 'string' },
   depth: { type: 'string', default: 'auto' },
   fps: { type: 'string', default: '15' },
   capture: { type: 'string', default: 'video' },
@@ -105,18 +142,35 @@ function resolveOptions(v) {
   } catch {
     throw new UsageError('--url / --app-url must be full URLs, e.g. https://www.instagram.com/reels/');
   }
+  if (v.file && v.url) throw new UsageError('Use either --file or --url, not both.');
+  let url = v.url ?? REELS_URL;
+  if (v.file) {
+    const abs = path.resolve(v.file);
+    if (!fs.existsSync(abs)) throw new UsageError(`--file: no such file: ${v.file}`);
+    url = pathToFileURL(abs).href;
+  }
+  const scale = Number(v.scale);
+  if (!Number.isFinite(scale) || scale < 0.2 || scale > 3) throw new UsageError(`--scale must be a number from 0.2 to 3 (got "${v.scale}")`);
+  if (v.out && !v.once) throw new UsageError('--out needs --once.');
   return {
-    style: v.ramp ? 'custom' : oneOf('style', v.style, STYLES),
+    look: oneOf('look', v.look, LOOK_IDS),
+    style: v.style === undefined ? undefined : oneOf('style', v.style, STYLE_IDS),
     ramp: v.ramp,
-    color: oneOf('color', v.color, COLORS),
-    palette: oneOf('palette', v.palette, PALETTES),
-    edges: !v['no-edges'],
-    invert: v.invert,
+    color: v.color === undefined ? undefined : oneOf('color', v.color, COLORS),
+    palette: v.palette === undefined ? undefined : oneOf('palette', v.palette, PALETTE_IDS),
+    edges: v['no-edges'] ? false : undefined,
+    invert: v.invert ? true : undefined,
     cols: v.cols === undefined ? undefined : positiveInt('cols', v.cols),
+    sets: (v.set ?? []).map(parseSetting),
+    list: v.list,
+    render: oneOf('render', v.render, ['auto', 'text', 'image', 'blocks']),
+    graphics: oneOf('graphics', v.graphics, ['auto', 'kitty', 'iterm2']),
+    scale,
     depth: oneOf('depth', v.depth, ['auto', 'truecolor', '256', 'none']),
     fps: positiveInt('fps', v.fps),
     capture: oneOf('capture', v.capture, ['video', 'page']),
-    url: v.url ?? REELS_URL,
+    url,
+    out: v.out,
     once: v.once,
     username: v.username,
     manual: v.manual,
@@ -144,6 +198,19 @@ export async function main(argv) {
   if (values.version) {
     process.stdout.write(`${VERSION}\n`);
     return 0;
+  }
+
+  if (values.list !== undefined) {
+    try {
+      process.stdout.write(listing(values.list));
+      return 0;
+    } catch (err) {
+      if (err instanceof UsageError) {
+        process.stderr.write(`${err.message}\n`);
+        return 2;
+      }
+      throw err;
+    }
   }
 
   const command = positionals[0] ?? 'reels';
@@ -263,7 +330,10 @@ async function cmdReels(opts) {
     if (onInstagram && !(await hasSession(context))) await signIn(page, context, opts, log);
 
     log.info('Loading the ASCII generator…');
-    bridge = await AsciiBridge.open(context, { appUrl: opts.appUrl, settings: engineSettings(opts) });
+    bridge = await AsciiBridge.open(context, { appUrl: opts.appUrl });
+    // The app's own defaults and looks come from the live engine; flags and --set layer on top.
+    const settings = resolveSettings(bridge.info, { look: opts.look, flags: flagSettings(opts), sets: opts.sets });
+    await bridge.configure(settings);
 
     log.info('Opening reels…');
     try {
@@ -279,8 +349,8 @@ async function cmdReels(opts) {
     const frames = new FrameSource(page, { mode: opts.capture, log });
     const reels = new Reels(page, log);
 
-    if (opts.once) return await printOnce({ frames, bridge, opts, baseDepth });
-    await runViewer({ frames, reels, bridge, page, opts, baseDepth, log });
+    if (opts.once) return await printOnce({ frames, bridge, opts, settings, baseDepth });
+    await runViewer({ frames, reels, bridge, opts, settings, look: opts.look, baseDepth, log });
     return 0;
   } catch (err) {
     await saveDebugShot(session.context, opts, 'reels-failed', log);
@@ -291,26 +361,47 @@ async function cmdReels(opts) {
   }
 }
 
-async function printOnce({ frames, bridge, opts, baseDepth }) {
+async function printOnce({ frames, bridge, opts, settings, baseDepth }) {
   let frame = null;
   for (let i = 0; i < 20 && !frame; i++) {
     frame = await frames.frame();
     if (!frame) await new Promise((r) => setTimeout(r, 250));
   }
   if (!frame) throw new FriendlyError('No frame could be captured from the page.');
-  // An explicit --cols is honoured exactly; otherwise fit the terminal (80x40 when stdout is a pipe).
-  const cols =
-    opts.cols ??
-    fitCols({
-      termCols: process.stdout.columns || 80,
-      termRows: process.stdout.rows || 40,
-      srcW: frame.w,
-      srcH: frame.h,
-      reserveRows: 0,
-    });
   const depth = opts.color === 'none' ? 'none' : baseDepth;
-  const grid = await bridge.render(frame, { cols, color: depth !== 'none' });
-  if (!grid) throw new FriendlyError('The ASCII engine returned nothing for this frame.');
-  process.stdout.write(`${renderLines(grid, depth).join('\n')}\n`);
+  const pixelOnly = PIXEL_ONLY_STYLES.includes(settings.style);
+
+  let lines;
+  if (pixelOnly) {
+    // film and particles are not made of characters: draw the app's canvas as half-block pixels
+    const w = opts.cols ?? Math.min(process.stdout.columns || 80, 100);
+    const h = Math.max(2, Math.round((frame.h / frame.w) * w) & ~1);
+    const img = await bridge.renderImage(frame, { cols: settings.cols, w: w * 4, h: h * 4, encode: 'raw', rawW: w, rawH: h });
+    if (!img) throw new FriendlyError('The ASCII engine returned nothing for this frame.');
+    lines = halfBlockLines(img.data, w, h, depth);
+  } else {
+    // An explicit --cols is honoured exactly; otherwise fit the terminal (80x40 when stdout is a pipe).
+    const cols =
+      opts.cols ??
+      fitCols({
+        termCols: process.stdout.columns || 80,
+        termRows: process.stdout.rows || 40,
+        srcW: frame.w,
+        srcH: frame.h,
+        maxCols: settings.cols,
+        reserveRows: 0,
+      });
+    const grid = await bridge.render(frame, { cols, time: 0, color: depth !== 'none' });
+    if (!grid) throw new FriendlyError('The ASCII engine returned nothing for this frame.');
+    lines = composeLines(grid, settings, { depth });
+  }
+  process.stdout.write(`${lines.join('\n')}\n`);
+
+  if (opts.out) {
+    const dir = path.dirname(path.resolve(opts.out));
+    const name = path.basename(opts.out).replace(/\.png$/i, '');
+    const files = await saveStill({ bridge, frame, settings, time: 0, dir, name, textLines: null });
+    process.stderr.write(`saved ${files.png}\n`);
+  }
   return 0;
 }
