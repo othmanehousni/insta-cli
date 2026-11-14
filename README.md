@@ -201,19 +201,41 @@ Reels have sound, and so does this. It is on by default whenever an audio player
   nothing plays twice.
 - **It follows the reel on screen**: scroll to the next reel and you hear that one. A reel with no sound track
   starts no player.
-- **Any player that reads raw PCM on stdin works.** `--audio-player auto` picks the first of `ffplay`, `mpv`,
-  `play`, `pw-cat`, `paplay`, `aplay` that it finds, and takes the sample rate from the page. To use something
-  else give a command, for example `--audio-player "aplay -q -t raw -f S16_LE -r {rate} -c {channels} -"`
-  (16-bit little-endian stereo on stdin; `{rate}` and `{channels}` are filled in; no shell is involved).
+- **Any player that reads audio on stdin works.** `--audio-player auto` picks the first of `ffplay`, `mpv`,
+  `play`, `pw-cat`, `paplay`, `aplay` that it finds, and takes the sample rate from the page. `ffplay` is fed a
+  self-describing WAV stream (no version-specific options), and if it dies right after starting the CLI tries two
+  raw-PCM spellings before giving up. To use something else give a command, for example
+  `--audio-player "aplay -q -t raw -f S16_LE -r {rate} -c {channels} -"` (16-bit little-endian stereo on stdin;
+  `{rate}` and `{channels}` are filled in; no shell is involved, so no quoting either).
 - **Keys:** `a` mutes, `9` / `0` change the volume, and all of them are also in the settings panel (`Tab`) next to
   *Sound delay*. The HUD shows `♪ 100%`, or `♪ muted`.
 - **Lip-sync.** The sound is captured live but the picture is drawn a moment after it was captured (longer in
   image mode). The viewer measures that lag, subtracts the tap's own ~190 ms batching, and holds the sound back by
   the remainder. It is an estimate: `,` and `.` nudge it in 50 ms steps if it is off for you, or fix it with
   `--audio-delay <ms>`. `--debug` prints the numbers.
+- A player that fails shows `♪ ✗` in the HUD, and the reason (with what the player itself said) is printed after you
+  quit, so it is not lost with the screen.
 - No player installed? You get one warning and the video carries on silently. `--audio-player ffplay` when ffplay
   is missing is an error instead, since you asked for it by name.
 - Sound is not played with `--once`, and recordings (`r`) have none.
+
+### If there is no sound
+
+```bash
+insta-ascii audio-test
+```
+
+plays a one-second beep through your player, trying each way of starting it, and prints what the player itself said
+about any that fail. It judges by how long the player really played, not only by its exit code, because some players
+quit instantly and silently when they cannot open an audio output. Typical messages:
+
+| What the player said | Meaning |
+| --- | --- |
+| `Could not initialize SDL - Audio target … not available` / `SDL_OpenAudio … Couldn't open audio device` / `audio open failed` | the player cannot get an audio **output**: no device selected, another app holds it exclusively, or you are in a session with no sound (SSH, a container, WSL without audio). The sound plays on the machine the CLI runs on. Try `--audio-player mpv` or `play` |
+| `Unrecognized option …` / `Option … not found` | this version of the player rejects a flag; the CLI already tries three spellings for `ffplay`, so if all fail open an issue with this output |
+| `not found` | the player is not installed (`insta-ascii --list audio`) |
+
+`--no-audio` always gets you a silent viewer.
 
 ## Privacy and security
 
@@ -258,7 +280,7 @@ Reels have sound, and so does this. It is on by default whenever an audio player
 - **Sound could not be heard while developing this**: the machine had no audio device at all. What is verified is
   everything up to the player: a known 440 Hz / 880 Hz tone inside a *muted* video comes out of the tap as the
   right frequency at the right level, follows reel changes, mute and volume behave, and the exact `ffplay` command
-  line decodes the stream (played on SDL's dummy output). **Not verified:** actual output on speakers, the command
+  line decodes the stream (played on SDL's dummy output). Failure reporting was checked by forcing the real `ffplay` to fail (no sound device here, and an audio driver that does not exist). **Not verified:** actual output on speakers, the command
   lines for `mpv`, `play`, `pw-cat`, `paplay` and `aplay` (their tools weren't installed), and sound from real
   Instagram reels. The tap runs on the Instagram page's main thread, so a very busy page could make the sound
   crackle; and media that the browser treats as protected or cross-origin gives silence.
@@ -271,7 +293,7 @@ Reels have sound, and so does this. It is on by default whenever an audio player
 npm test
 ```
 
-230 tests, about two minutes. Pure units: terminal composition, fitting, key parsing,
+260 tests, about two and a half minutes. Pure units: terminal composition, fitting, key parsing,
 settings and the panel, the Kitty / iTerm2 encoders, export. Against the **live** Devault app (skipped if it can't be
 reached): that the catalog here matches the app's styles, palettes, looks and defaults; every text style's character
 set; **all 13 styles and all 19 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG

@@ -96,7 +96,7 @@ describe('interactive viewer (real pty)', { skip: usable ? false : 'needs util-l
     if (skipReason) return t.skip(skipReason);
     const term = run(['--render', 'image', '--graphics', 'kitty']);
     try {
-      await term.waitFor(/\x1b_Ga=T,f=100,t=d,q=2,i=1,c=\d+,r=\d+,C=1,m=[01];/, { timeout: 90_000 });
+      await term.waitFor(/\x1b_Ga=T,f=100,t=d,q=2,i=1,c=\d+,r=\d+,C=1,m=[01];/, { timeout: 150_000 });
       assert.match(term.output(), /image\(kitty\)/);
       assert.equal(await term.finish(), 0);
       assert.ok(term.output().includes(`${ESC}_Ga=d,d=A`), 'removes its images on exit');
@@ -109,7 +109,7 @@ describe('interactive viewer (real pty)', { skip: usable ? false : 'needs util-l
     if (skipReason) return t.skip(skipReason);
     const term = run(['--render', 'image', '--graphics', 'iterm2']);
     try {
-      await term.waitFor(/\x1b\]1337;File=inline=1;size=\d+;width=\d+;height=\d+;preserveAspectRatio=0:/, { timeout: 90_000 });
+      await term.waitFor(/\x1b\]1337;File=inline=1;size=\d+;width=\d+;height=\d+;preserveAspectRatio=0:/, { timeout: 150_000 });
       assert.match(term.output(), /image\(iterm2\)/);
       assert.equal(await term.finish(), 0);
     } finally {

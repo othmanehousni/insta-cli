@@ -1,8 +1,9 @@
 // End-to-end: the real CLI, a real browser, a local stand-in for the reels feed, and the live Devault app.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import { launchSession } from '../src/browser.js';
 import { FrameSource } from '../src/capture.js';
@@ -226,9 +227,57 @@ describe('CLI argument handling (no browser needed)', () => {
     assert.match((await runCli(['--list', 'audio'], { env: { ...env, PATH: bin } })).stdout, /Sound will play through: ffplay/, 'ffplay is preferred');
   });
 
+  describe('audio-test', () => {
+    const sink = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'sink.js');
+
+    it('plays a beep through a custom player and says it worked', async () => {
+      const out = path.join(tmpDir(), 'beep.pcm');
+      const r = await runCli(['audio-test', '--audio-player', `${process.execPath} ${sink} {rate} ${out}`], { env });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /1\. your command\s+OK/);
+      assert.match(r.stdout, /accepted the audio/);
+      assert.equal(fs.readFileSync(`${out}.rate`, 'utf8'), '48000');
+      assert.equal(fs.statSync(out).size, 48000 * 4, 'one second of 48 kHz stereo');
+    });
+
+    it('reports a player that fails, with the exit code and what it said, and exits 1', async () => {
+      const failing = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'failing-player.js');
+      const r = await runCli(['audio-test', '--audio-player', `${process.execPath} ${failing} 3`], { env });
+      assert.equal(r.code, 1, r.stdout);
+      assert.match(r.stdout, /FAILED exit 3: Could not open the audio device/);
+      assert.match(r.stdout, /None of the ways of starting it worked/);
+    });
+
+    it('says so when there is no player at all', async () => {
+      const r = await runCli(['audio-test'], { env: { ...env, PATH: tmpDir() } });
+      assert.equal(r.code, 1);
+      assert.match(r.stderr, /No audio player was found/);
+      assert.match(r.stderr, /--list audio/);
+    });
+
+    it('an explicitly named player that is missing is an error with a hint', async () => {
+      const r = await runCli(['audio-test', '--audio-player', 'mpv'], { env: { ...env, PATH: tmpDir() } });
+      assert.equal(r.code, 1);
+      assert.match(r.stderr, /"mpv" was not found/);
+    });
+
+    const hasFfplay = !spawnSync('ffplay', ['-version']).error;
+    it('with the real ffplay: works on a working output, and fails with ffplay\'s reason on a broken one', { skip: hasFfplay ? false : 'ffplay is not installed' }, async () => {
+      const ok = await runCli(['audio-test', '--audio-player', 'ffplay'], { env: { ...env, SDL_AUDIODRIVER: 'dummy' } });
+      assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+      assert.match(ok.stdout, /1\. self-describing WAV stream\s+OK\s+finished cleanly in 1\.\d s/);
+
+      const broken = await runCli(['audio-test', '--audio-player', 'ffplay'], { env: { ...env, SDL_AUDIODRIVER: 'definitely-not-a-driver' } });
+      assert.equal(broken.code, 1);
+      assert.match(broken.stdout, /1\. self-describing WAV stream\s+FAILED exit 1: .*(Could not initialize SDL|not available)/);
+      assert.match(broken.stdout, /2\. raw PCM, -ar\/-ac options\s+FAILED/);
+      assert.match(broken.stdout, /3\. raw PCM, -ch_layout option\s+FAILED/);
+    });
+  });
+
   it('--help documents every look flag and the keys', async () => {
     const { stdout } = await runCli(['--help'], { env });
-    for (const needle of ['--look', '--set', '--list', '--render', '--graphics', '--scale', '--file', '--out', 'Tab', 'record', '--no-audio', '--volume', '--audio-player', '--audio-delay', 'a mute']) assert.ok(stdout.includes(needle), needle);
+    for (const needle of ['--look', '--set', '--list', '--render', '--graphics', '--scale', '--file', '--out', 'Tab', 'record', '--no-audio', '--volume', '--audio-player', '--audio-delay', 'a mute', 'audio-test']) assert.ok(stdout.includes(needle), needle);
   });
 
   it('logout with nothing saved is a no-op', async () => {

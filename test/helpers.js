@@ -252,6 +252,7 @@ export function fakeSpawn() {
   const spawnFn = (cmd, args) => {
     const child = new EventEmitter();
     child.stdin = new PassThrough();
+    child.stderr = new PassThrough(); // what the player "says": child.stderr.write('...')
     const chunks = [];
     child.stdin.on('data', (d) => chunks.push(d));
     child.killed = false;

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AsciiBridge, DEFAULT_APP_URL, flagSettings } from './ascii.js';
-import { choosePlayer, describePlayers, startAudio } from './audio.js';
+import { choosePlayer, describePlayers, startAudio, testPlayer } from './audio.js';
 import { launchSession } from './browser.js';
 import { FrameSource } from './capture.js';
 import {
@@ -44,6 +44,7 @@ Usage
   insta-ascii [reels] [options]     watch the Reels feed (default command)
   insta-ascii login [--manual]      sign in and remember the session
   insta-ascii logout                forget the saved session
+  insta-ascii audio-test            play a beep through the audio player and say what works
   insta-ascii --list <what>         looks | styles | palettes | settings | audio
 
 Keys while watching
@@ -240,11 +241,12 @@ export async function main(argv) {
 
   const command = positionals[0] ?? 'reels';
   try {
-    if (positionals.length > 1 || !['reels', 'login', 'logout'].includes(command)) {
+    if (positionals.length > 1 || !['reels', 'login', 'logout', 'audio-test'].includes(command)) {
       throw new UsageError(`Unknown command: ${positionals.join(' ')}`);
     }
     const opts = resolveOptions(values);
     if (command === 'logout') return cmdLogout();
+    if (command === 'audio-test') return await cmdAudioTest(opts);
     if (command === 'login') return await cmdLogin(opts);
     return await cmdReels(opts);
   } catch (err) {
@@ -261,6 +263,29 @@ export async function main(argv) {
 }
 
 // ---------------------------------------------------------------------------------------------
+
+async function cmdAudioTest(opts) {
+  const player = choosePlayer(opts.audioPlayer);
+  if (!player) {
+    throw new FriendlyError('No audio player was found, so there is nothing to test.', 'Install ffmpeg (for ffplay), mpv or sox; see `insta-ascii --list audio`.');
+  }
+  const rate = 48000;
+  process.stdout.write(`Testing ${player.name} (${player.cmd}) with a one-second beep, ${rate} Hz stereo.\n`);
+  const results = await testPlayer(player, { rate });
+  results.forEach((r, i) => {
+    const status = r.ok ? 'OK    ' : 'FAILED';
+    const detail = r.ok ? `finished cleanly in ${(r.ms / 1000).toFixed(1)} s` : `${r.code === null ? '' : `exit ${r.code}`}${r.error ? `${r.code === null ? '' : ': '}${r.error}` : ''}`;
+    process.stdout.write(`  ${i + 1}. ${r.variant.label.padEnd(30)} ${status} ${detail}\n`);
+  });
+  const worked = results.find((r) => r.ok);
+  if (worked) {
+    process.stdout.write(`\n${player.name} accepted the audio${results.length > 1 ? ` once it was started as "${worked.variant.label}"; insta-ascii does that automatically` : ''}. If you heard the beep, sound will work.\n`);
+    return 0;
+  }
+  process.stdout.write('\nNone of the ways of starting it worked. The messages above are what the player itself said.\n');
+  process.stdout.write('If they mention a device, check that something is selected for output (and not in use exclusively by another app); otherwise try another player with --audio-player.\n');
+  return 1;
+}
 
 function audioListing() {
   const lines = ['Audio players (the first one found is used; --audio-player picks another):'];
@@ -402,6 +427,10 @@ async function cmdReels(opts) {
     await saveDebugShot(session.context, opts, 'reels-failed', log);
     throw err;
   } finally {
+    if (sound?.failed) {
+      // the viewer has left the alternate screen by now, so this stays readable
+      log.warn(`${sound.failed.message}${sound.failed.hint ? `\n         ${sound.failed.hint}` : ''}`);
+    }
     sound?.stop();
     await bridge?.close();
     await session.close();

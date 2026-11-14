@@ -17,7 +17,7 @@
   },
   "scripts": {
     "start": "node bin/insta-ascii.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test --test-concurrency=2 test/*.test.js"
   },
   "dependencies": {
     "playwright": "1.63.0"
