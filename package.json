@@ -1,0 +1,25 @@
+{
+  "name": "insta-ascii",
+  "version": "0.1.0",
+  "description": "Browse your Instagram Reels in the terminal, rendered by the Devault ASCII generator.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "insta-ascii": "bin/insta-ascii.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node bin/insta-ascii.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

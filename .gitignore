@@ -1,0 +1,7 @@
+node_modules/
+# Browser profile / session data and debug captures must never be committed.
+.insta-ascii/
+profile/
+debug/
+*.log
+.DS_Store

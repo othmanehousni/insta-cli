@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>mock reels</title>
+<!--
+  A stand-in for the Instagram Reels feed, used by the tests: a vertical scroll-snap feed with one
+  playing <video> per reel, and ArrowDown / ArrowUp moving between reels like the real page does.
+  Each reel shows its number so tests can tell them apart.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; scrollbar-width: none; }
+  section { height: 100vh; scroll-snap-align: start; display: flex; justify-content: center; align-items: center; }
+  video { height: 100vh; aspect-ratio: 9 / 16; background: #111; }
+</style>
+<div id="feed"></div>
+<script>
+  const PALETTES = [['#0b3d91', '#fc3d21'], ['#1b5e20', '#ffeb3b'], ['#4a148c', '#00e5ff']];
+  const feed = document.getElementById('feed');
+  PALETTES.forEach(([a, b], i) => {
+    const section = document.createElement('section');
+    const canvas = document.createElement('canvas');
+    canvas.width = 360;
+    canvas.height = 640;
+    const g = canvas.getContext('2d');
+    setInterval(() => {
+      const t = performance.now() / 1000;
+      const grad = g.createLinearGradient(0, 0, 360, 640);
+      grad.addColorStop(0, a);
+      grad.addColorStop(1, b);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 360, 640);
+      g.fillStyle = '#fff';
+      g.beginPath();
+      g.arc(180 + 90 * Math.sin(t * 2), 200, 70, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#000';
+      g.font = 'bold 260px sans-serif';
+      g.textAlign = 'center';
+      g.fillText(String(i + 1), 180, 520);
+    }, 33);
+    const video = document.createElement('video');
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.srcObject = canvas.captureStream(30);
+    section.appendChild(video);
+    feed.appendChild(section);
+    video.play().catch(() => {});
+  });
+  addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') feed.scrollBy({ top: innerHeight });
+    if (e.key === 'ArrowUp') feed.scrollBy({ top: -innerHeight });
+  });
+</script>
