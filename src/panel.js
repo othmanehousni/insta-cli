@@ -29,11 +29,16 @@ export class Panel {
     this.notice = '';
   }
 
-  /** All rows for this state: headers and selectable items. */
-  rows(settings, { look, mode }) {
+  /** All rows for this state: headers and selectable items. `sound` is { muted, volume, offset, failed } or absent when there is no sound. */
+  rows(settings, { look, mode, sound }) {
     const rows = [{ header: 'View' }];
     rows.push({ id: '@look', type: 'look', label: 'Look', value: this.lookLabel(look) });
     rows.push({ id: '@render', type: 'render', label: 'Render', value: mode });
+    if (sound) {
+      rows.push({ id: '@sound', type: 'sound', label: 'Sound', value: sound.failed ? 'unavailable' : sound.muted ? 'off' : 'on' });
+      rows.push({ id: '@volume', type: 'volume', label: 'Volume', value: `${sound.volume}%`, bar: sound.volume / 100 });
+      rows.push({ id: '@sync', type: 'sync', label: 'Sound delay', value: `${sound.offset > 0 ? '+' : ''}${sound.offset} ms` });
+    }
     for (const section of visibleLayout(settings)) {
       rows.push({ header: section.title });
       for (const control of section.controls) {
@@ -115,6 +120,9 @@ export class Panel {
   #adjust(row, dir, big) {
     if (row.type === 'look') return { type: 'look', dir };
     if (row.type === 'render') return { type: 'mode', dir };
+    if (row.type === 'sound') return { type: 'sound' };
+    if (row.type === 'volume') return { type: 'volume', dir, big };
+    if (row.type === 'sync') return { type: 'sync', dir, big };
     const c = row.control;
     if (c.type === 'text' || c.type === 'color') {
       this.editing = { buffer: String(row.value) };
@@ -149,7 +157,7 @@ export class Panel {
 
   /**
    * The panel as `height` lines of exactly `width` columns.
-   * @param ctx { look, mode, modeNote } modeNote: text shown when the selected setting needs another render mode
+   * @param ctx { look, mode, sound, lookHint, modeNote } modeNote: text shown for the Render row
    */
   render(width, height, settings, ctx) {
     const rows = this.rows(settings, ctx);
@@ -183,7 +191,13 @@ export class Panel {
           const n = Math.round(Math.max(0, Math.min(1, f)) * BAR);
           bar = `${'█'.repeat(n)}${'░'.repeat(BAR - n)} `;
         }
-      } else value = String(r.value);
+      } else {
+        value = String(r.value);
+        if (r.bar !== undefined) {
+          const n = Math.round(Math.max(0, Math.min(1, r.bar)) * BAR);
+          bar = `${'█'.repeat(n)}${'░'.repeat(BAR - n)} `;
+        }
+      }
       const right = `${bar}${value}`;
       const labelW = Math.max(4, width - 2 - visLen(right) - 1);
       const line = `${isSel ? '▸' : ' '} ${fit(r.label, labelW)} ${right}`;
@@ -202,6 +216,9 @@ export class Panel {
       if (row.control.type === 'range') help = `${row.control.min}–${row.control.max}${help ? ` · ${help}` : ''}`;
     } else if (row.type === 'look') help = ctx.lookHint ?? '';
     else if (row.type === 'render') help = ctx.modeNote ?? '';
+    else if (row.type === 'sound') help = ctx.sound?.failed ? ctx.sound.failed : 'a mutes from anywhere';
+    else if (row.type === 'volume') help = '9 / 0 from anywhere';
+    else if (row.type === 'sync') help = ', / . from anywhere; + delays the sound behind the picture';
     out.push(`${ESC}2m${fit(help, width)}${ESC}0m`);
     out.push(`${ESC}2m${fit('↑↓ select  ←→ change  ⇧←→ ×10', width)}${ESC}0m`);
     out.push(`${ESC}2m${fit('Enter edit  d default  Tab close', width)}${ESC}0m`);

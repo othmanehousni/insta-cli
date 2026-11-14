@@ -14,7 +14,8 @@ describe('interactive viewer (real pty)', { skip: usable ? false : 'needs util-l
   let home;
   let skipReason = null;
   const url = () => `${server.url}/mock-reels.html`;
-  const run = (extra = [], opts = {}) => runInPty(['--url', url(), '--fps', '8', ...extra], { env: { INSTA_ASCII_HOME: home }, ...opts });
+  // --no-audio: this suite is about the picture; with sound the panel gains rows (Sound, Volume, Sound delay) and its key positions shift
+  const run = (extra = [], opts = {}) => runInPty(['--url', url(), '--fps', '8', '--no-audio', ...extra], { env: { INSTA_ASCII_HOME: home }, ...opts });
 
   before(async () => {
     server = await startFixtureServer();

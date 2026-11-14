@@ -41,6 +41,7 @@ export function inspectMainVideo({ grabWidth }) {
   if (!best) return { ok: false, reason: 'no-video' };
   const [mediaW, mediaH] = dims(best);
   window.__insta_ascii_main = best; // lets pause/resume act on the same element
+  if (window.__ia_audio) window.__ia_audio.sync(best); // keeps the sound tap on the reel that is showing
 
   window.__insta_ascii_ids = window.__insta_ascii_ids || { n: 0 };
   if (!best.__iaId) best.__iaId = ++window.__insta_ascii_ids.n;
@@ -103,8 +104,14 @@ export class FrameSource {
     };
   }
 
-  /** The next frame to render, or null while no video is ready yet. */
+  /** The next frame to render, or null while no video is ready yet. Frames carry `capturedAt` (performance.now()). */
   async frame() {
+    const frame = await this.#grab();
+    if (frame) frame.capturedAt = performance.now();
+    return frame;
+  }
+
+  async #grab() {
     if (this.mode === 'page') return this.#screenshot();
 
     const info = await this.page.evaluate(inspectMainVideo, { grabWidth: this.useScreenshots ? 0 : this.width });

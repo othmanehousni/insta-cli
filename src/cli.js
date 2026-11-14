@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AsciiBridge, DEFAULT_APP_URL, flagSettings } from './ascii.js';
+import { choosePlayer, describePlayers, startAudio } from './audio.js';
 import { launchSession } from './browser.js';
 import { FrameSource } from './capture.js';
 import {
@@ -43,7 +44,7 @@ Usage
   insta-ascii [reels] [options]     watch the Reels feed (default command)
   insta-ascii login [--manual]      sign in and remember the session
   insta-ascii logout                forget the saved session
-  insta-ascii --list <what>         looks | styles | palettes | settings
+  insta-ascii --list <what>         looks | styles | palettes | settings | audio
 
 Keys while watching
   j / ↓   next reel          k / ↑   previous reel       space   pause / resume
@@ -51,6 +52,7 @@ Keys while watching
   v       text / image / blocks rendering                 x       save a PNG (and .txt)
   r       record an MP4 (needs ffmpeg)                    q       quit
   o       compare with the original  ([ ] move the divider)
+  a mute · 9 / 0 volume · , / . sound delay
   s style · c colour · p palette · e outlines · i invert · + / - detail
 
 Look  (everything the Devault app offers: 13 styles, its preset looks and every slider)
@@ -72,6 +74,13 @@ Rendering
       --scale <n>        image resolution multiplier, 0.2-3   [1]
       --depth <mode>     auto | truecolor | 256 | none   [auto]
       --fps <n>          frame-rate cap   [15]
+
+Sound  (played through a command-line player: ffplay, mpv, sox, pw-cat, paplay or aplay)
+      --no-audio         no sound
+      --volume <n>       0-100   [100]
+      --audio-player <p> auto | ffplay | mpv | play | pw-cat | paplay | aplay | a command reading raw
+                         16-bit stereo PCM on stdin, e.g. "aplay -q -t raw -f S16_LE -r {rate} -c {channels} -"   [auto]
+      --audio-delay <ms> auto | a fixed delay that holds the sound back behind the picture   [auto]
 
 Source
       --capture <what>   video (the reel) | page (the whole viewport)   [video]
@@ -108,6 +117,10 @@ const OPTIONS = {
   scale: { type: 'string', default: '1' },
   file: { type: 'string' },
   out: { type: 'string' },
+  'no-audio': { type: 'boolean', default: false },
+  volume: { type: 'string', default: '100' },
+  'audio-player': { type: 'string', default: 'auto' },
+  'audio-delay': { type: 'string', default: 'auto' },
   depth: { type: 'string', default: 'auto' },
   fps: { type: 'string', default: '15' },
   capture: { type: 'string', default: 'video' },
@@ -152,6 +165,14 @@ function resolveOptions(v) {
   const scale = Number(v.scale);
   if (!Number.isFinite(scale) || scale < 0.2 || scale > 3) throw new UsageError(`--scale must be a number from 0.2 to 3 (got "${v.scale}")`);
   if (v.out && !v.once) throw new UsageError('--out needs --once.');
+  const volume = Number(v.volume);
+  if (!Number.isInteger(volume) || volume < 0 || volume > 100) throw new UsageError(`--volume must be a whole number from 0 to 100 (got "${v.volume}")`);
+  let audioDelay = 'auto';
+  if (v['audio-delay'] !== 'auto') {
+    audioDelay = Number(v['audio-delay']);
+    if (!Number.isFinite(audioDelay) || audioDelay < 0 || audioDelay > 5000) throw new UsageError(`--audio-delay must be "auto" or a number of milliseconds from 0 to 5000 (got "${v['audio-delay']}")`);
+  }
+  if (v['audio-player'].trim() === '') throw new UsageError('--audio-player is empty.');
   return {
     look: oneOf('look', v.look, LOOK_IDS),
     style: v.style === undefined ? undefined : oneOf('style', v.style, STYLE_IDS),
@@ -171,6 +192,10 @@ function resolveOptions(v) {
     capture: oneOf('capture', v.capture, ['video', 'page']),
     url,
     out: v.out,
+    audio: !v['no-audio'],
+    volume,
+    audioPlayer: v['audio-player'],
+    audioDelay,
     once: v.once,
     username: v.username,
     manual: v.manual,
@@ -202,7 +227,7 @@ export async function main(argv) {
 
   if (values.list !== undefined) {
     try {
-      process.stdout.write(listing(values.list));
+      process.stdout.write(values.list === 'audio' ? audioListing() : listing(values.list));
       return 0;
     } catch (err) {
       if (err instanceof UsageError) {
@@ -236,6 +261,16 @@ export async function main(argv) {
 }
 
 // ---------------------------------------------------------------------------------------------
+
+function audioListing() {
+  const lines = ['Audio players (the first one found is used; --audio-player picks another):'];
+  const players = describePlayers();
+  for (const p of players) lines.push(`  ${p.name.padEnd(8)} ${p.path ? `found  ${p.path}` : `-      (${p.hint})`}`);
+  const first = players.find((p) => p.path);
+  lines.push('', first ? `Sound will play through: ${first.name}` : 'None found: there will be no sound. Install ffmpeg (for ffplay), mpv or sox.');
+  lines.push('A custom command may be given to --audio-player; it must read raw signed 16-bit little-endian stereo PCM on stdin.', '{rate} and {channels} in it are filled in. On macOS, `brew install ffmpeg` provides ffplay.');
+  return `${lines.join('\n')}\n`;
+}
 
 function cmdLogout() {
   const removed = removeProfile();
@@ -323,6 +358,7 @@ async function cmdReels(opts) {
     log,
   });
   let bridge;
+  let sound = null;
   try {
     const { context } = session;
     const page = context.pages()[0] ?? (await context.newPage());
@@ -334,6 +370,16 @@ async function cmdReels(opts) {
     // The app's own defaults and looks come from the live engine; flags and --set layer on top.
     const settings = resolveSettings(bridge.info, { look: opts.look, flags: flagSettings(opts), sets: opts.sets });
     await bridge.configure(settings);
+
+    if (!opts.once && opts.audio) {
+      const player = choosePlayer(opts.audioPlayer); // throws a friendly error for an explicit player that is missing
+      if (player) {
+        sound = await startAudio({ page, player, volume: opts.volume / 100, delayMs: typeof opts.audioDelay === 'number' ? opts.audioDelay : 0 });
+        log.debug(`sound: ${player.name}`);
+      } else {
+        log.warn('no audio player found, so there will be no sound. Install ffmpeg (ffplay), mpv or sox; see --list audio.');
+      }
+    }
 
     log.info('Opening reels…');
     try {
@@ -350,12 +396,13 @@ async function cmdReels(opts) {
     const reels = new Reels(page, log);
 
     if (opts.once) return await printOnce({ frames, bridge, opts, settings, baseDepth });
-    await runViewer({ frames, reels, bridge, opts, settings, look: opts.look, baseDepth, log });
+    await runViewer({ frames, reels, bridge, opts, settings, look: opts.look, baseDepth, audio: sound, log });
     return 0;
   } catch (err) {
     await saveDebugShot(session.context, opts, 'reels-failed', log);
     throw err;
   } finally {
+    sound?.stop();
     await bridge?.close();
     await session.close();
   }

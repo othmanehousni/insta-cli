@@ -1,4 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -179,4 +181,86 @@ export function runInPty(args, { cols = 110, rows = 40, env = {} } = {}) {
     },
     kill: () => child.kill('SIGKILL'),
   };
+}
+
+/** True when ffmpeg is installed (several tests build their media with it). */
+export function hasFfmpeg() {
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Two 8-second 9:16 videos with sound: 440 Hz and 880 Hz sine tones (Opus in WebM), plus a silent one.
+ * Written into `dir`. Returns null when ffmpeg is missing.
+ */
+export function makeToneMedia(dir) {
+  if (!hasFfmpeg()) return null;
+  const make = (file, hz) =>
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', `sine=frequency=${hz}:sample_rate=48000:duration=8`, '-f', 'lavfi', '-i', 'testsrc=size=360x640:rate=15:duration=8', '-c:v', 'libvpx', '-b:v', '300k', '-c:a', 'libopus', '-b:a', '64k', '-shortest', path.join(dir, file)]);
+  make('tone440.webm', 440);
+  make('tone880.webm', 880);
+  execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=360x640:rate=15:duration=8', '-c:v', 'libvpx', '-b:v', '300k', '-an', path.join(dir, 'silent.webm')]);
+  return dir;
+}
+
+/** A feed of reels, one per file, that scrolls with ArrowDown/ArrowUp like the real page. The videos start MUTED, like Instagram's. */
+export const feedPage = (files) => `<!doctype html><meta charset="utf-8"><title>sound feed</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#feed{height:100vh;overflow-y:scroll;scroll-snap-type:y mandatory;scrollbar-width:none}
+section{height:100vh;scroll-snap-align:start;display:flex;justify-content:center;align-items:center}video{height:100vh;aspect-ratio:9/16;background:#111}</style>
+<div id="feed">${files.map((f) => `<section><video src="${f}" muted loop autoplay playsinline></video></section>`).join('')}</div>
+<script>
+  document.querySelectorAll('video').forEach((v) => v.play().catch(() => {}));
+  addEventListener('keydown', (e) => { const f = document.getElementById('feed');
+    if (e.key === 'ArrowDown') f.scrollBy({ top: innerHeight }); if (e.key === 'ArrowUp') f.scrollBy({ top: -innerHeight }); });
+</script>`;
+
+/** Energy of `freq` in interleaved 16-bit stereo PCM (left channel), by the Goertzel algorithm. */
+export function toneEnergy(pcm, rate, freq) {
+  const n = Math.floor(pcm.length / 4);
+  const w = (2 * Math.PI * freq) / rate;
+  const k = 2 * Math.cos(w);
+  let s1 = 0;
+  let s2 = 0;
+  for (let i = 0; i < n; i++) {
+    const s0 = pcm.readInt16LE(i * 4) / 32768 + k * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return (s1 * s1 + s2 * s2 - k * s1 * s2) / (n * n);
+}
+
+/** Which of `candidates` (Hz) carries the most energy in the PCM. */
+export function dominantFrequency(pcm, rate, candidates = [220, 330, 440, 660, 880, 1320]) {
+  return candidates.map((f) => [f, toneEnergy(pcm, rate, f)]).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+/** RMS of the left channel of interleaved 16-bit stereo PCM, as a fraction of full scale. */
+export function rmsOf(pcm) {
+  const n = Math.floor(pcm.length / 4);
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += (pcm.readInt16LE(i * 4) / 32768) ** 2;
+  return Math.sqrt(sum / Math.max(1, n));
+}
+
+/** A stand-in for a spawned player process: records its arguments and everything written to its stdin. */
+export function fakeSpawn() {
+  const calls = [];
+  const spawnFn = (cmd, args) => {
+    const child = new EventEmitter();
+    child.stdin = new PassThrough();
+    const chunks = [];
+    child.stdin.on('data', (d) => chunks.push(d));
+    child.killed = false;
+    child.kill = () => {
+      child.killed = true;
+      child.emit('exit', null);
+    };
+    calls.push({ cmd, args, chunks, child });
+    return child;
+  };
+  return { spawnFn, calls, pcm: (i = 0) => Buffer.concat(calls[i]?.chunks ?? []) };
 }

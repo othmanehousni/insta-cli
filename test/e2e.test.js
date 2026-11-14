@@ -171,6 +171,12 @@ describe('CLI argument handling (no browser needed)', () => {
     ['a bad --graphics', ['--graphics', 'sixel'], /--graphics must be one of/],
     ['a bad --scale', ['--scale', '9'], /--scale must be a number from 0.2 to 3/],
     ['--out without --once', ['--out', 'x.png'], /--out needs --once/],
+    ['a volume above 100', ['--volume', '150'], /--volume must be a whole number from 0 to 100/],
+    ['a non-numeric volume', ['--volume', 'loud'], /--volume must be a whole number/],
+    ['a fractional volume', ['--volume', '50.5'], /--volume must be a whole number/],
+    ['a bad --audio-delay', ['--audio-delay', 'soon'], /--audio-delay must be "auto" or a number/],
+    ['an excessive --audio-delay', ['--audio-delay', '9999'], /from 0 to 5000/],
+    ['an empty --audio-player', ['--audio-player', ' '], /--audio-player is empty/],
     ['--file and --url together', ['--file', 'x', '--url', 'https://example.com'], /either --file or --url/],
     ['a missing --file', ['--file', '/definitely/not/here.png'], /no such file/],
   ]) {
@@ -206,9 +212,23 @@ describe('CLI argument handling (no browser needed)', () => {
     assert.equal((await runCli(['--list', 'colours'], { env })).code, 2);
   });
 
+  it('--list audio says which player will be used, from the PATH', async () => {
+    const bin = tmpDir();
+    const none = await runCli(['--list', 'audio'], { env: { ...env, PATH: bin } });
+    assert.equal(none.code, 0);
+    assert.match(none.stdout, /None found: there will be no sound/);
+    assert.match(none.stdout, /ffplay\s+-/);
+    fs.writeFileSync(path.join(bin, 'mpv'), '#!/bin/sh\n', { mode: 0o755 });
+    const mpv = await runCli(['--list', 'audio'], { env: { ...env, PATH: bin } });
+    assert.match(mpv.stdout, /mpv\s+found\s+.*mpv/);
+    assert.match(mpv.stdout, /Sound will play through: mpv/);
+    fs.writeFileSync(path.join(bin, 'ffplay'), '#!/bin/sh\n', { mode: 0o755 });
+    assert.match((await runCli(['--list', 'audio'], { env: { ...env, PATH: bin } })).stdout, /Sound will play through: ffplay/, 'ffplay is preferred');
+  });
+
   it('--help documents every look flag and the keys', async () => {
     const { stdout } = await runCli(['--help'], { env });
-    for (const needle of ['--look', '--set', '--list', '--render', '--graphics', '--scale', '--file', '--out', 'Tab', 'record']) assert.ok(stdout.includes(needle), needle);
+    for (const needle of ['--look', '--set', '--list', '--render', '--graphics', '--scale', '--file', '--out', 'Tab', 'record', '--no-audio', '--volume', '--audio-player', '--audio-delay', 'a mute']) assert.ok(stdout.includes(needle), needle);
   });
 
   it('logout with nothing saved is a no-op', async () => {

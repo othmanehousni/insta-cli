@@ -177,3 +177,52 @@ describe('Panel rendering', () => {
     assert.ok(p.render(40, 60, s, ctx).map(strip).some((l) => l.includes('#F4F4F7▏')));
   });
 });
+
+describe('Panel sound rows', () => {
+  const sound = (extra = {}) => ({ muted: false, volume: 70, offset: 0, failed: null, ...extra });
+  const withSound = (extra) => ({ ...ctx, sound: sound(extra) });
+
+  it('shows Sound, Volume and Sound delay in the View section only when there is sound', () => {
+    const labels = (c) => make().rows(state(), c).filter((r) => !r.header).slice(0, 6).map((r) => r.label);
+    assert.deepEqual(labels(withSound()).slice(0, 5), ['Look', 'Render', 'Sound', 'Volume', 'Sound delay']);
+    assert.ok(!labels(ctx).includes('Sound') && !labels(ctx).includes('Volume'));
+  });
+  it('shows the current values', () => {
+    const rows = make().rows(state(), withSound({ offset: 50 }));
+    assert.equal(rows.find((r) => r.id === '@sound').value, 'on');
+    assert.equal(rows.find((r) => r.id === '@volume').value, '70%');
+    assert.equal(rows.find((r) => r.id === '@sync').value, '+50 ms');
+    assert.equal(make().rows(state(), withSound({ muted: true })).find((r) => r.id === '@sound').value, 'off');
+    assert.equal(make().rows(state(), withSound({ failed: 'no player' })).find((r) => r.id === '@sound').value, 'unavailable');
+    assert.equal(make().rows(state(), withSound({ offset: -100 })).find((r) => r.id === '@sync').value, '-100 ms');
+  });
+  it('asks the viewer to toggle, change volume and change the delay', () => {
+    const p = make();
+    const c = withSound();
+    p.index = 2;
+    assert.deepEqual(p.handleKey('enter', state(), c), { type: 'sound' });
+    assert.deepEqual(p.handleKey('left', state(), c), { type: 'sound' });
+    p.index = 3;
+    assert.deepEqual(p.handleKey('right', state(), c), { type: 'volume', dir: 1, big: false });
+    assert.deepEqual(p.handleKey('S-left', state(), c), { type: 'volume', dir: -1, big: true });
+    p.index = 4;
+    assert.deepEqual(p.handleKey('right', state(), c), { type: 'sync', dir: 1, big: false });
+    assert.deepEqual(p.handleKey('S-right', state(), c), { type: 'sync', dir: 1, big: true });
+  });
+  it('draws a volume bar and explains the shortcuts', () => {
+    const p = make();
+    const c = { ...withSound({ volume: 50 }), mode: 'text' };
+    p.index = 3;
+    const lines = p.render(40, 40, state(), c).map(strip);
+    assert.match(lines.find((l) => l.includes('Volume')), /▸ Volume\s+█{4}░{4} 50%/);
+    assert.ok(lines.some((l) => l.includes('9 / 0 from anywhere')));
+    p.index = 4;
+    assert.ok(p.render(40, 40, state(), c).map(strip).some((l) => l.includes(', / . from anywhere')));
+  });
+  it('shows why sound is unavailable', () => {
+    const p = make();
+    p.index = 2;
+    const lines = p.render(60, 40, state(), { ...ctx, sound: sound({ failed: 'The audio player (ffplay) stopped with exit code 1.' }) }).map(strip);
+    assert.ok(lines.some((l) => l.includes('stopped with exit code 1')));
+  });
+});

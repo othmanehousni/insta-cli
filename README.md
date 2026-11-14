@@ -3,7 +3,7 @@
 Your Instagram **Reels feed, in the terminal**. The CLI signs in to your account, opens the Reels
 page, and renders the playing video with the
 [Devault ASCII generator](https://devault-ascii.pages.dev/ascii-generator/app/): its 13 styles, its
-preset looks and every one of its controls.
+preset looks and every one of its controls. **With sound.**
 
 ![The same frame as the original, as the app's own canvas in the terminal (image mode), and as real characters (text mode)](docs/preview.jpg)
 
@@ -63,7 +63,9 @@ presets:
 - Node.js 18.17 or newer
 - Google Chrome, **or** run `npx playwright install chromium` once
 - Internet access (Instagram, and `devault-ascii.pages.dev` for the renderer)
-- `ffmpeg` only if you want to record MP4s
+- An audio player for **sound**: `ffplay` (comes with ffmpeg), `mpv`, SoX's `play`, `pw-cat`, `paplay` or `aplay`.
+  `insta-ascii --list audio` shows what it found. On macOS, `brew install ffmpeg` is enough.
+- `ffmpeg` also for recording MP4s
 
 ## Install
 
@@ -109,6 +111,9 @@ insta-ascii
 | `o`, then `[` `]` | **Compare** with the original; move the divider |
 | `x` | save the app's canvas as a PNG (and the text as `.txt`) to `~/.insta-ascii/shots` |
 | `r` | start / stop recording an **MP4** (needs ffmpeg) |
+| `a` | mute / unmute the **sound** |
+| `9` / `0` | volume down / up |
+| `,` / `.` | move the sound earlier / later against the picture (50 ms) |
 | `s` `c` `p` `e` `i` | cycle style · colour · palette · outlines · invert |
 | `+` / `-` | more / less detail |
 | `q` | quit |
@@ -135,8 +140,8 @@ hides what the app would hide (for example, edge strength only appears while "Tr
 `--style custom --ramp " .oO@"`.
 
 **Not ported, deliberately:** the site's Library link and account menu, the scrub bar (a live feed has none),
-the immersive view (a terminal is already full-screen), JPEG/WebP and 720p/1080p/4K export choices (stills are PNG
-at 1920 px on the long side, recordings 1280 px), and audio.
+the immersive view (a terminal is already full-screen), and JPEG/WebP and 720p/1080p/4K export choices (stills are PNG
+at 1920 px on the long side, recordings 1280 px). Recordings have no sound.
 
 ## Options
 
@@ -156,6 +161,10 @@ at 1920 px on the long side, recordings 1280 px), and audio.
 | `--scale <n>` | image resolution multiplier, 0.2–3 | `1` |
 | `--depth <mode>` | `auto` `truecolor` `256` `none` (`NO_COLOR` is respected) | `auto` |
 | `--fps <n>` | frame-rate cap | `15` |
+| `--no-audio` | no sound | sound on |
+| `--volume <n>` | starting volume, 0–100 | `100` |
+| `--audio-player <p>` | `auto`, a player name, or a command that reads raw PCM on stdin | `auto` |
+| `--audio-delay <ms>` | `auto` (measured), or a fixed delay behind the picture | `auto` |
 | `--capture <what>` | `video` (the reel) or `page` (the whole viewport) | `video` |
 | `--once` | print one frame to stdout and exit (no terminal needed) | |
 | `--out <file.png>` | with `--once`: also save the app's canvas as a PNG | |
@@ -178,6 +187,34 @@ Run `insta-ascii --help` for the same list.
 - **Apple Terminal, GNOME Terminal, Windows Terminal, …:** text (best with truecolor) or `--render blocks`.
   **Sixel is not supported.**
 
+## Sound
+
+Reels have sound, and so does this. It is on by default whenever an audio player is installed.
+
+```
+ the reel's <video> ──► tapped inside the Instagram page ──► 16-bit PCM ──► your audio player ──► speakers
+   (may be muted)          (video.captureStream)               (Node)        (ffplay, mpv, …)
+```
+
+- **Instagram's mute button doesn't matter.** Instagram starts reels muted; the tap reads the video's audio even
+  while the element is muted, so the CLI never fights Instagram's own state. The browser itself stays muted, so
+  nothing plays twice.
+- **It follows the reel on screen**: scroll to the next reel and you hear that one. A reel with no sound track
+  starts no player.
+- **Any player that reads raw PCM on stdin works.** `--audio-player auto` picks the first of `ffplay`, `mpv`,
+  `play`, `pw-cat`, `paplay`, `aplay` that it finds, and takes the sample rate from the page. To use something
+  else give a command, for example `--audio-player "aplay -q -t raw -f S16_LE -r {rate} -c {channels} -"`
+  (16-bit little-endian stereo on stdin; `{rate}` and `{channels}` are filled in; no shell is involved).
+- **Keys:** `a` mutes, `9` / `0` change the volume, and all of them are also in the settings panel (`Tab`) next to
+  *Sound delay*. The HUD shows `♪ 100%`, or `♪ muted`.
+- **Lip-sync.** The sound is captured live but the picture is drawn a moment after it was captured (longer in
+  image mode). The viewer measures that lag, subtracts the tap's own ~190 ms batching, and holds the sound back by
+  the remainder. It is an estimate: `,` and `.` nudge it in 50 ms steps if it is off for you, or fix it with
+  `--audio-delay <ms>`. `--debug` prints the numbers.
+- No player installed? You get one warning and the video carries on silently. `--audio-player ffplay` when ffplay
+  is missing is an error instead, since you asked for it by name.
+- Sound is not played with `--once`, and recordings (`r`) have none.
+
 ## Privacy and security
 
 - **Your session** lives in a browser profile at `~/.insta-ascii/profile` (override with `INSTA_ASCII_HOME`), created
@@ -189,6 +226,8 @@ Run `insta-ascii --help` for the same list.
   script is not run at all; only its engine is.
 - Saved stills and recordings go to `~/.insta-ascii/shots` (private folder). `--debug` screenshots go to
   `~/.insta-ascii/debug`; they can show account details, so delete them when you are done.
+- **Sound stays on your machine**: page → this process → your local audio player. The renderer tab never sees it
+  (it only receives picture frames), and the function that carries it is only exposed to the Instagram page.
 - This tool has no telemetry of its own. (The browser talks to Instagram, of course, and loads the renderer's files
   from the Devault site.)
 
@@ -216,7 +255,13 @@ Run `insta-ascii --help` for the same list.
   letter spacing and non-normal blend modes (the terminal chooses its own font), and does not do bloom, curvature or
   chromatic aberration.
 - The reels page is driven like a person would: arrow keys, with the mouse wheel as a fallback.
-- **No audio**: it's a picture in a terminal.
+- **Sound could not be heard while developing this**: the machine had no audio device at all. What is verified is
+  everything up to the player: a known 440 Hz / 880 Hz tone inside a *muted* video comes out of the tap as the
+  right frequency at the right level, follows reel changes, mute and volume behave, and the exact `ffplay` command
+  line decodes the stream (played on SDL's dummy output). **Not verified:** actual output on speakers, the command
+  lines for `mpv`, `play`, `pw-cat`, `paplay` and `aplay` (their tools weren't installed), and sound from real
+  Instagram reels. The tap runs on the Instagram page's main thread, so a very busy page could make the sound
+  crackle; and media that the browser treats as protected or cross-origin gives silence.
 - If the Devault app is redesigned, the engine may not be found, or the catalog here may drift; the CLI says so
   instead of guessing, and the test suite compares this CLI's catalog with the live app.
 
@@ -226,13 +271,17 @@ Run `insta-ascii --help` for the same list.
 npm test
 ```
 
-186 tests, about a minute and a half. Pure units: terminal composition, fitting, key parsing,
+230 tests, about two minutes. Pure units: terminal composition, fitting, key parsing,
 settings and the panel, the Kitty / iTerm2 encoders, export. Against the **live** Devault app (skipped if it can't be
 reached): that the catalog here matches the app's styles, palettes, looks and defaults; every text style's character
 set; **all 13 styles and all 19 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG
 sizes; Compare; the network lockdown. End to end: the CLI against a local reels feed and local media, and the
 interactive viewer in a **real pty** (needs `script`), including both image protocols. Also the login state machine
 against a mock login server, the cross-origin-video fallback and real `ffmpeg` recording (needs `ffmpeg`).
+For sound: the audio tap against real 440 Hz and 880 Hz tones inside a *muted* video (frequency, level, following
+reel changes, silent videos, mute, volume), the player process with a fake clock and fake player, the player
+command lines (including the real `ffplay` decoding our PCM on SDL's dummy output), lip-sync, and the viewer in a
+real pty feeding a recording player.
 
 ```
 bin/insta-ascii.js   entry point
@@ -245,6 +294,8 @@ src/engine-page.js   code that runs inside the app's page
 src/terminal.js      composing cells (tint, effects), fitting, half-blocks, full-screen drawing
 src/protocols.js     Kitty / iTerm2 image protocols, terminal detection, cell size
 src/export.js        PNG stills and MP4 recording
+src/audio.js         finding a player, the player process, volume / mute / lip-sync delay
+src/audio-page.js    the sound tap that runs inside the Instagram page
 src/instagram.js     login, session check, feed navigation
 src/capture.js       getting frames out of the page
 test/                unit, integration and end-to-end tests, plus a mock feed and mock login
