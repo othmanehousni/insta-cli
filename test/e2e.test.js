@@ -93,6 +93,58 @@ describe('CLI --once against a mock reels feed', () => {
     assert.ok(stdout.replace(/\n/g, '').split('').every((ch) => ' .#'.includes(ch)));
   });
 
+  describe('--style classic: pure characters at a higher resolution, not the picture with a filter on it', () => {
+    const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const backgrounds = (s) => new Set([...s.matchAll(/48;2;(\d+;\d+;\d+)/g)].map((m) => m[1]));
+
+    it('draws only the style\'s own characters, on one plain backdrop: nothing of the picture shows through', async (t) => {
+      if (skipReason) return t.skip(skipReason);
+      const r = await run(['--style', 'classic', '--depth', 'truecolor', '--cols', '80']);
+      assert.equal(r.code, 0, r.stderr);
+      const text = plain(r.stdout).replace(/\n/g, '');
+      const allowed = new Set(Array.from('@%#*+=-:. /\\|'));
+      assert.ok([...text].every((ch) => allowed.has(ch)), `unexpected characters: ${[...new Set(text)].filter((c) => !allowed.has(c)).join('')}`);
+      assert.ok(text.includes('@'), 'and it is not blank');
+      assert.equal(backgrounds(r.stdout).size, 1, `cell backgrounds: ${[...backgrounds(r.stdout)].join(' | ')}`);
+    });
+
+    it('the photo look, by contrast, tints every cell with the picture (that is what makes it "photo")', async (t) => {
+      if (skipReason) return t.skip(skipReason);
+      const r = await run(['--look', 'photo', '--style', 'classic', '--depth', 'truecolor', '--cols', '80']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(backgrounds(r.stdout).size > 3, `${backgrounds(r.stdout).size} backgrounds`);
+    });
+
+    it('--style or --ramp or --set style=… on their own imply the pure-ASCII look; an explicit --look wins', async (t) => {
+      if (skipReason) return t.skip(skipReason);
+      const bg = async (args) => backgrounds((await run([...args, '--depth', 'truecolor', '--cols', '60'])).stdout).size;
+      assert.equal(await bg(['--ramp', ' .:#@']), 1);
+      assert.equal(await bg(['--set', 'style=detailed']), 1);
+      assert.ok((await bg(['--look', 'photo', '--style', 'detailed'])) > 3);
+      assert.ok((await bg([])) > 3, 'with nothing chosen it is the photo look');
+    });
+
+    it('--glyphs and --set glyphs / sharpen are accepted and print something (exact comparisons use a still picture, below)', async (t) => {
+      if (skipReason) return t.skip(skipReason);
+      for (const args of [['--glyphs', 'brightness'], ['--glyphs', 'shape'], ['--set', 'glyphs=brightness'], ['--set', 'sharpen=0'], ['--set', 'sharpen=100']]) {
+        const r = await run(['--style', 'classic', '--color', 'none', '--cols', '40', ...args]);
+        assert.equal(r.code, 0, `${args.join(' ')}: ${r.stderr}`);
+        assert.ok(/\S/.test(r.stdout), `${args.join(' ')} printed nothing`);
+      }
+    });
+
+    it('other styles keep working in shape mode: detailed, minimal, binary and a custom ramp', async (t) => {
+      if (skipReason) return t.skip(skipReason);
+      const ramps = { detailed: null, minimal: null, binary: '10', custom: null };
+      for (const style of Object.keys(ramps)) {
+        const r = await run(['--style', style, ...(style === 'custom' ? ['--ramp', ' .:oO@'] : []), '--no-edges', '--color', 'none', '--cols', '40']);
+        assert.equal(r.code, 0, `${style}: ${r.stderr}`);
+        assert.ok(/\S/.test(r.stdout), `${style} printed nothing`);
+        if (ramps[style]) assert.ok([...r.stdout.replace(/\s/g, '')].every((c) => ramps[style].includes(c)), style);
+      }
+    });
+  });
+
   it('--look applies one of the app\'s presets, flags override it, --set overrides both', async (t) => {
     if (skipReason) return t.skip(skipReason);
     const glyphs = (r) => new Set(r.stdout.replace(/\s/g, ''));
@@ -170,6 +222,9 @@ describe('CLI argument handling (no browser needed)', () => {
     ['a bad --set choice', ['--set', 'blend=wobbly'], /blend must be one of/],
     ['a bad --render', ['--render', 'hologram'], /--render must be one of/],
     ['a bad --graphics', ['--graphics', 'sixel'], /--graphics must be one of/],
+    ['a bad --glyphs', ['--glyphs', 'sideways'], /--glyphs must be one of: shape, brightness/],
+    ['a bad --set glyphs', ['--set', 'glyphs=foo'], /glyphs must be one of/],
+    ['an out-of-range --set sharpen', ['--set', 'sharpen=101'], /sharpen must be a number from 0 to 100/],
     ['a bad --scale', ['--scale', '9'], /--scale must be a number from 0.2 to 3/],
     ['--out without --once', ['--out', 'x.png'], /--out needs --once/],
     ['a volume above 100', ['--volume', '150'], /--volume must be a whole number from 0 to 100/],
@@ -204,7 +259,7 @@ describe('CLI argument handling (no browser needed)', () => {
 
   it('--list prints the catalog without starting a browser', async () => {
     const started = Date.now();
-    for (const [what, pattern] of [['looks', /terminal.*Old monitor/], ['styles', /film.*image rendering only/], ['palettes', /phosphor/], ['settings', /underlay\s+0\.\.100/]]) {
+    for (const [what, pattern] of [['looks', /terminal.*Old monitor/], ['looks', /ascii\s+Pure ASCII/], ['styles', /film.*image rendering only/], ['palettes', /phosphor/], ['settings', /underlay\s+0\.\.100/]]) {
       const { code, stdout } = await runCli(['--list', what], { env });
       assert.equal(code, 0, what);
       assert.match(stdout, pattern, what);
@@ -277,7 +332,7 @@ describe('CLI argument handling (no browser needed)', () => {
 
   it('--help documents every look flag and the keys', async () => {
     const { stdout } = await runCli(['--help'], { env });
-    for (const needle of ['--look', '--set', '--list', '--render', '--graphics', '--scale', '--file', '--out', 'Tab', 'record', '--no-audio', '--volume', '--audio-player', '--audio-delay', 'a mute', 'audio-test']) assert.ok(stdout.includes(needle), needle);
+    for (const needle of ['--look', '--set', '--list', '--render', '--graphics', '--scale', '--file', '--out', 'Tab', 'record', '--no-audio', '--volume', '--audio-player', '--audio-delay', 'a mute', 'audio-test', '--glyphs', 'g letters picked by shape']) assert.ok(stdout.includes(needle), needle);
   });
 
   it('logout with nothing saved is a no-op', async () => {
@@ -414,6 +469,40 @@ describe('--file: a local image or video instead of Reels', () => {
     const lines = r.stdout.trimEnd().split('\n');
     assert.ok(lines.length >= 20, `${lines.length} rows`);
     assert.ok(/\S/.test(r.stdout));
+  });
+
+  it('letters are chosen by shape by default; --glyphs brightness (or --set glyphs=brightness) gives the app\'s own mapping', async (t) => {
+    if (!ffmpegOk) return t.skip('ffmpeg is not available to make a test image');
+    if (skipReason) return t.skip(skipReason);
+    const out = async (extra) => {
+      const r = await printFile('still.png', ['--style', 'classic', ...extra]);
+      assert.equal(r.code, 0, r.stderr);
+      return r.stdout;
+    };
+    const shape = await out([]);
+    assert.equal(await out([]), shape, 'a still picture prints the same every time');
+    assert.equal(await out(['--glyphs', 'shape']), shape, 'shape is the default');
+    const brightness = await out(['--glyphs', 'brightness']);
+    assert.notEqual(brightness, shape);
+    assert.equal(await out(['--set', 'glyphs=brightness']), brightness);
+    assert.equal(brightness.split('\n').length, shape.split('\n').length, 'the same size either way');
+  });
+
+  it('--set sharpen changes the result', async (t) => {
+    if (!ffmpegOk) return t.skip('ffmpeg is not available to make a test image');
+    if (skipReason) return t.skip(skipReason);
+    const out = async (v) => (await printFile('still.png', ['--style', 'classic', '--set', `sharpen=${v}`])).stdout;
+    assert.notEqual(await out(0), await out(100));
+  });
+
+  it('--style classic prints only characters of the ramp and its outline glyphs, in a sensible tone order', async (t) => {
+    if (!ffmpegOk) return t.skip('ffmpeg is not available to make a test image');
+    if (skipReason) return t.skip(skipReason);
+    const r = await printFile('still.png', ['--style', 'classic']);
+    assert.equal(r.code, 0, r.stderr);
+    const allowed = new Set(Array.from('@%#*+=-:. /\\|\n'));
+    assert.ok([...r.stdout].every((c) => allowed.has(c)), [...new Set(r.stdout)].filter((c) => !allowed.has(c)).join(''));
+    assert.ok(new Set(r.stdout.replace(/\s/g, '')).size >= 6, 'a rich picture uses many characters');
   });
 
   it('renders a video', async (t) => {

@@ -48,8 +48,10 @@ describe('interactive viewer (real pty)', { skip: usable ? false : 'needs util-l
       term.send('\t');
       at = await term.waitFor(/waiting|reel 1/, { from: at });
 
-      // next look
+      // next look: the pure-ASCII one is ours and sits right after photo, then the app's own presets
       at = term.output().length;
+      term.send('l');
+      at = await term.waitFor(/ascii · text/, { from: at });
       term.send('l');
       await term.waitFor(/devault · text/, { from: at });
 
@@ -87,6 +89,28 @@ describe('interactive viewer (real pty)', { skip: usable ? false : 'needs util-l
       assert.equal(code, 0);
       assert.ok(term.output().includes(`${ESC}[?1049l`), 'leaves the alternate screen');
       assert.ok(term.output().includes(`${ESC}[?25h`), 'shows the cursor again');
+    } finally {
+      term.kill();
+    }
+  });
+
+  it('--style on its own gives the pure-ASCII look (letters on one plain backdrop), and g switches how letters are chosen', async (t) => {
+    if (skipReason) return t.skip(skipReason);
+    const term = run(['--style', 'classic', '--render', 'text']);
+    try {
+      let at = await term.waitFor(/ascii · text/, { timeout: 150_000 });
+      await term.waitFor(/38;2;\d+;\d+;\d+m/, { from: at });
+      const backgrounds = (from) => new Set([...term.output().slice(from).matchAll(/48;2;(\d+;\d+;\d+)/g)].map((m) => m[1]));
+      assert.equal(backgrounds(0).size, 1, 'nothing of the picture is painted behind the letters');
+
+      at = term.output().length;
+      term.send('g');
+      at = await term.waitFor(/characters chosen by brightness/, { from: at });
+      term.send('g');
+      await term.waitFor(/characters chosen by shape/, { from: at });
+      assert.equal(backgrounds(0).size, 1, 'still plain after switching');
+
+      assert.equal(await term.finish(), 0);
     } finally {
       term.kill();
     }

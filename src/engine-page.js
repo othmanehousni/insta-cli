@@ -103,8 +103,8 @@ export async function initEngine(settings) {
     defaults: plain(found.defaults),
     base: plain(found.base),
     looks: found.looks.map((l) => ({ id: l.id, label: l.label, patch: plain(l.patch) })),
-    palettes: found.palettes.map((p) => ({ id: p.id, label: p.label })),
-    styles: found.styles.map((s) => ({ id: s.id, kind: s.kind })),
+    palettes: found.palettes.map((p) => ({ id: p.id, label: p.label, stops: [...p.stops] })),
+    styles: found.styles.map((s) => ({ id: s.id, kind: s.kind, ramp: Array.from(s.ramp), edgeGlyphs: !!s.edgeGlyphs })),
   };
 }
 
@@ -289,4 +289,85 @@ export async function scaleFrame({ frame, w, h, crop }) {
   } finally {
     ia.release(el);
   }
+}
+
+/**
+ * Sample a frame on a fine grid for shape-aware glyph choice: every character cell gets sw x sh luminance samples
+ * (not one average), plus its average colour.
+ * Returns { luma: base64 Uint8 (cols*sw x rows*sh, row-major), rgb: base64 Uint8 (cols x rows x 3) }.
+ */
+export async function sampleCells({ frame, cols, rows, sw, sh }) {
+  const ia = window.__insta_ascii;
+  const el = await ia.load(frame);
+  try {
+    const W = cols * sw;
+    const H = rows * sh;
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(el, 0, 0, el.width, el.height, 0, 0, W, H);
+    const px = g.getImageData(0, 0, W, H).data;
+    const luma = new Uint8Array(W * H);
+    const sum = new Uint32Array(cols * rows * 3);
+    for (let y = 0; y < H; y++) {
+      const cy = Math.floor(y / sh);
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        const r = px[i];
+        const gg = px[i + 1];
+        const b = px[i + 2];
+        luma[y * W + x] = (0.299 * r + 0.587 * gg + 0.114 * b) | 0;
+        const o = (cy * cols + Math.floor(x / sw)) * 3;
+        sum[o] += r;
+        sum[o + 1] += gg;
+        sum[o + 2] += b;
+      }
+    }
+    const n = sw * sh;
+    const rgb = new Uint8Array(cols * rows * 3);
+    for (let i = 0; i < rgb.length; i++) rgb[i] = Math.round(sum[i] / n);
+    return { luma: ia.bytesToB64(luma), rgb: ia.bytesToB64(rgb) };
+  } finally {
+    ia.release(el);
+  }
+}
+
+/**
+ * What each character looks like: its ink coverage (0..255) on an sw x sh grid, drawn in a monospace font the way
+ * a terminal would. Returns one base64 Uint8Array of sw*sh values per character, in the order given.
+ */
+export function glyphMasks({ chars, sw, sh }) {
+  const K = 8; // rasterise at 8x and average down, so thin strokes keep their weight
+  const W = sw * K;
+  const H = sh * K;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  const family = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace';
+  g.font = `${Math.round(H * 0.74)}px ${family}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  const out = [];
+  for (const ch of chars) {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = '#000';
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = '#fff';
+    g.fillText(ch, W / 2, H * 0.76);
+    const px = g.getImageData(0, 0, W, H).data;
+    const m = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        let acc = 0;
+        for (let yy = 0; yy < K; yy++) for (let xx = 0; xx < K; xx++) acc += px[(((y * K + yy) * W) + x * K + xx) * 4];
+        m[y * sw + x] = Math.round(acc / (K * K));
+      }
+    }
+    out.push(window.__insta_ascii.bytesToB64(m));
+  }
+  return out;
 }

@@ -1,4 +1,5 @@
-import { configureEngine, initEngine, renderFrame, renderImage, scaleFrame } from './engine-page.js';
+import { configureEngine, glyphMasks, initEngine, renderFrame, renderImage, sampleCells, scaleFrame } from './engine-page.js';
+import { OWN_KEYS } from './settings.js';
 import { FriendlyError } from './util.js';
 
 export const DEFAULT_APP_URL = 'https://devault-ascii.pages.dev/ascii-generator/app/';
@@ -22,7 +23,7 @@ export function lockdownVerdict(method, url, origin) {
 }
 
 /** The few CLI flags that are shorthand for app settings -> the app's own settings keys (undefined = not given). */
-export function flagSettings({ style, ramp, color, palette, edges, invert, cols }) {
+export function flagSettings({ style, ramp, color, palette, edges, invert, cols, glyphs }) {
   return {
     style: ramp ? 'custom' : style,
     customRamp: ramp,
@@ -31,6 +32,7 @@ export function flagSettings({ style, ramp, color, palette, edges, invert, cols 
     edges,
     invert,
     cols,
+    glyphs,
   };
 }
 
@@ -99,7 +101,8 @@ export class AsciiBridge {
 
   /** Change app settings live (style, palette, colour mode, edges, invert, ...). */
   async configure(partial) {
-    await this.page.evaluate(configureEngine, partial);
+    const forEngine = Object.fromEntries(Object.entries(partial).filter(([k]) => !OWN_KEYS.includes(k)));
+    if (Object.keys(forEngine).length) await this.page.evaluate(configureEngine, forEngine);
   }
 
   /**
@@ -133,6 +136,18 @@ export class AsciiBridge {
     const out = await this.page.evaluate(renderImage, { frame, cols, w, h, time, encode, quality, rawW, rawH, compare });
     if (!out) return null;
     return { ...out, data: Buffer.from(out.data, 'base64') };
+  }
+
+  /** The frame sampled sw x sh times per character cell, for shape-aware glyph choice. */
+  async sampleCells(frame, { cols, rows, sw, sh }) {
+    const out = await this.page.evaluate(sampleCells, { frame, cols, rows, sw, sh });
+    return { luma: Buffer.from(out.luma, 'base64'), rgb: Buffer.from(out.rgb, 'base64') };
+  }
+
+  /** How each character looks (ink coverage on an sw x sh grid): one Uint8Array per character. */
+  async glyphMasks(chars, { sw, sh }) {
+    const out = await this.page.evaluate(glyphMasks, { chars, sw, sh });
+    return out.map((b64) => new Uint8Array(Buffer.from(b64, 'base64')));
   }
 
   /** The source picture as raw RGBA at w x h (optionally only its left `crop` fraction). */

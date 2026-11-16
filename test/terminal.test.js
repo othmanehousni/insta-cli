@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseKeys } from '../src/keys.js';
-import { TEXT_TUNING, Screen, backdrop, composeLines, detectDepth, fitBox, fitCols, halfBlockLines, rgbTo256 } from '../src/terminal.js';
+import { TEXT_TUNING, Screen, backdrop, cellAspect, composeLines, detectDepth, fitBox, fitCols, halfBlockLines, rgbTo256 } from '../src/terminal.js';
+import { rowsFor } from '../src/shapes.js';
 
 describe('fitCols', () => {
   it('is limited by terminal height for a portrait reel', () => {
@@ -21,6 +22,30 @@ describe('fitCols', () => {
       const rows = Math.max(1, Math.round((srcH / srcW) * cols * 0.5));
       assert.ok(rows <= 30, `${srcW}x${srcH}: ${rows} rows from ${cols} cols`);
     }
+  });
+  it('wider cells (a terminal whose cells are not 1:2) mean fewer columns for the same height, and it still fits', () => {
+    const narrow = fitCols({ termCols: 300, termRows: 41, srcW: 9, srcH: 16 });
+    const wide = fitCols({ termCols: 300, termRows: 41, srcW: 9, srcH: 16, aspect: 0.6 });
+    assert.equal(narrow, 45);
+    assert.equal(wide, 37); // 40 rows * 9/16 / 0.6
+    for (const aspect of [0.4, 0.5, 0.56, 0.6, 0.75]) {
+      const cols = fitCols({ termCols: 300, termRows: 41, srcW: 9, srcH: 16, aspect });
+      assert.ok(rowsFor(9, 16, cols, aspect) <= 40, `aspect ${aspect}: ${cols} cols`);
+    }
+  });
+});
+
+describe('cellAspect', () => {
+  it('is the cell\'s width over its height', () => {
+    assert.equal(cellAspect({ w: 9, h: 18 }), 0.5);
+    assert.ok(Math.abs(cellAspect({ w: 10, h: 21 }) - 10 / 21) < 1e-9);
+  });
+  it('assumes the usual 1:2 when the terminal did not say, or said something unusable', () => {
+    for (const bad of [null, undefined, {}, { w: 0, h: 18 }, { w: 9, h: 0 }, { w: NaN, h: 18 }, { w: -4, h: 8 }]) assert.equal(cellAspect(bad), 0.5, JSON.stringify(bad));
+  });
+  it('clamps absurd answers so one bad reply cannot wreck the picture', () => {
+    assert.equal(cellAspect({ w: 1, h: 100 }), 0.35);
+    assert.equal(cellAspect({ w: 100, h: 1 }), 0.8);
   });
 });
 

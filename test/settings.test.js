@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  ALL_DEFAULTS,
   APP_LOOKS,
   CONTROLS,
   CONTROL_BY_KEY,
@@ -8,12 +9,15 @@ import {
   LOOK_IDS,
   OWN_LOOKS,
   PALETTE_IDS,
+  OWN_DEFAULTS,
+  OWN_KEYS,
   PIXEL_ONLY_STYLES,
   SECTIONS,
   STYLES,
   STYLE_IDS,
   coerce,
   listing,
+  lookFor,
   lookPatch,
   parseSetting,
   resolveSettings,
@@ -46,8 +50,8 @@ describe('the catalog covers every setting of the app', () => {
     for (const c of CONTROLS) {
       assert.ok(!seen.has(c.key), `duplicate ${c.key}`);
       seen.add(c.key);
-      assert.ok(c.key in DEFAULTS, `${c.key} has no default`);
-      const d = DEFAULTS[c.key];
+      assert.ok(c.key in ALL_DEFAULTS, `${c.key} has no default`);
+      const d = ALL_DEFAULTS[c.key];
       if (c.type === 'range') assert.ok(typeof d === 'number' && d >= c.min && d <= c.max, `${c.key} default ${d} outside ${c.min}..${c.max}`);
       if (c.type === 'toggle') assert.equal(typeof d, 'boolean', c.key);
       if (c.type === 'choice') assert.ok(c.choices.some((x) => x.value === d), `${c.key} default ${d} not among choices`);
@@ -59,12 +63,18 @@ describe('the catalog covers every setting of the app', () => {
     assert.deepEqual(PIXEL_ONLY_STYLES, ['particle', 'film']);
     assert.equal(PALETTE_IDS.length, 7);
     assert.equal(APP_LOOKS.length, 18);
-    assert.equal(LOOK_IDS.length, 19);
+    assert.equal(LOOK_IDS.length, 20); // photo and ascii are ours
     assert.deepEqual(CONTROL_BY_KEY.style.choices.map((c) => c.value), STYLE_IDS);
     assert.deepEqual(CONTROL_BY_KEY.palette.choices.map((c) => c.value), PALETTE_IDS);
   });
-  it('the sections are the app\'s, in order', () => {
-    assert.deepEqual(SECTIONS.map((s) => s.title), ['Style', 'Particles', 'Film', 'Letters', 'On image', 'Tone', 'Colour', 'Contours', 'Effects']);
+  it('the sections are the app\'s, in order, with this CLI\'s text-rendering section before Effects', () => {
+    assert.deepEqual(SECTIONS.map((s) => s.title), ['Style', 'Particles', 'Film', 'Letters', 'On image', 'Tone', 'Colour', 'Contours', 'Text rendering', 'Effects']);
+  });
+  it('the settings that only this CLI has are marked as such, and the app\'s engine never sees them', () => {
+    assert.deepEqual(OWN_KEYS.sort(), ['glyphs', 'sharpen']);
+    for (const k of OWN_KEYS) assert.ok(!(k in DEFAULTS), `${k} must not be one of the app's defaults`);
+    assert.deepEqual(Object.keys(OWN_DEFAULTS).sort(), OWN_KEYS);
+    assert.equal(ALL_DEFAULTS.glyphs, 'shape', 'shape matching is the default');
   });
 });
 
@@ -174,6 +184,26 @@ describe('resolving settings', () => {
     for (const [k, v] of Object.entries(own)) assert.equal(p[k], v);
     assert.equal(p.colorMode, 'source');
   });
+  it('the pure-ASCII look shows only characters: no picture underneath, no outline glyphs lost', () => {
+    const p = lookPatch(info, 'ascii');
+    assert.equal(p.overlay, false, 'nothing of the picture shows through');
+    assert.equal(p.colorMode, 'source');
+    assert.equal(p.edges, true);
+    assert.equal(p.bloom, 0);
+    assert.equal(p.vignette, 0);
+  });
+  it('picking a style (or a ramp) yourself starts from the pure-ASCII look, not the photo look', () => {
+    assert.equal(lookFor({}), 'photo');
+    assert.equal(lookFor({ style: 'classic' }), 'ascii');
+    assert.equal(lookFor({ ramp: ' .#' }), 'ascii');
+    assert.equal(lookFor({ style: 'classic', look: 'photo' }), 'photo', 'an explicit look always wins');
+    assert.equal(lookFor({ look: 'devault' }), 'devault');
+  });
+  it('shape matching is on unless asked otherwise, and --set can switch it off', () => {
+    assert.equal(resolveSettings(info, { look: 'ascii' }).glyphs, 'shape');
+    assert.equal(resolveSettings(info, { look: 'ascii', sets: [['glyphs', 'brightness']] }).glyphs, 'brightness');
+    assert.equal(resolveSettings(info, { look: 'photo' }).sharpen, 80);
+  });
   it('the app\'s looks come from the engine, not from this CLI', () => {
     assert.equal(lookPatch(info, 'film').animate, true);
   });
@@ -193,5 +223,30 @@ describe('--list', () => {
   });
   it('rejects anything else', () => {
     assert.throws(() => listing('colours'), UsageError);
+  });
+});
+
+describe('--set for this CLI\'s own text settings', () => {
+  it('glyphs takes shape or brightness, sharpen a 0-100 number', () => {
+    assert.deepEqual(parseSetting('glyphs=brightness'), ['glyphs', 'brightness']);
+    assert.deepEqual(parseSetting('glyphs=Shape-matched'), ['glyphs', 'shape']);
+    assert.deepEqual(parseSetting('sharpen=40'), ['sharpen', 40]);
+    assert.throws(() => parseSetting('glyphs=foo'), UsageError);
+    assert.throws(() => parseSetting('sharpen=101'), UsageError);
+    assert.throws(() => parseSetting('sharpen=-5'), UsageError);
+  });
+  it('the sharpen slider only shows while characters are chosen by shape, and only for letter styles', () => {
+    const keys = (state) => visibleLayout({ ...ALL_DEFAULTS, ...state }).flatMap((s) => s.controls.map((c) => c.key));
+    assert.ok(keys({ style: 'classic' }).includes('sharpen'));
+    assert.ok(!keys({ style: 'classic', glyphs: 'brightness' }).includes('sharpen'));
+    assert.ok(keys({ style: 'classic', glyphs: 'brightness' }).includes('glyphs'));
+    assert.ok(!keys({ style: 'particle' }).includes('glyphs'), 'pixel styles are not made of characters');
+  });
+  it('is listed, labelled as this CLI\'s own', () => {
+    const l = listing('settings');
+    assert.match(l, /glyphs.*\[shape\]/);
+    assert.match(l, /sharpen.*\[80\]/);
+    assert.match(l, /this CLI/);
+    assert.match(listing('looks'), /ascii.*Pure ASCII/);
   });
 });

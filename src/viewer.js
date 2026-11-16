@@ -4,8 +4,9 @@ import { startKeys } from './keys.js';
 import { Panel } from './panel.js';
 import { ensurePrivateDir } from './paths.js';
 import { detectGraphics, encodingFor, imageFor, queryCellSize } from './protocols.js';
-import { CONTROL_BY_KEY, LOOK_IDS, PIXEL_ONLY_STYLES, allLooks, lookPatch, stepValue } from './settings.js';
-import { Screen, composeLines, fitBox, fitCols, halfBlockLines } from './terminal.js';
+import { ALL_DEFAULTS, CONTROL_BY_KEY, LOOK_IDS, PIXEL_ONLY_STYLES, allLooks, lookPatch, stepValue } from './settings.js';
+import { ShapeRenderer, rowsFor } from './shapes.js';
+import { Screen, cellAspect, composeLines, fitBox, fitCols, halfBlockLines } from './terminal.js';
 import { FriendlyError, sleep } from './util.js';
 
 const PANEL_WIDTH = 40;
@@ -44,9 +45,13 @@ export async function runViewer({ frames, reels, bridge, opts, settings: initial
       'Use --graphics kitty (kitty, Ghostty) or --graphics iterm2 (iTerm2, WezTerm), or --render text / blocks.',
     );
   }
-  let cell = { w: 9, h: 18 };
-  if (protocol) cell = (await queryCellSize()) ?? cell;
-  log.debug(`render ${mode}, graphics ${protocol ?? 'none'}, cell ${cell.w}x${cell.h}px`);
+  // How big one character cell is, in pixels. It sets the picture's proportions (terminals differ: 0.5 is typical, 0.56
+  // is not unusual) and, for image rendering, how many pixels fill a cell. Terminals that cannot answer cost 0.25 s once.
+  const measured = process.stdin.isTTY && process.stdout.isTTY ? await queryCellSize({ timeoutMs: protocol ? 300 : 250 }) : null;
+  const cell = measured ?? { w: 9, h: 18 };
+  const aspect = cellAspect(measured);
+  const shapes = new ShapeRenderer(bridge);
+  log.debug(`render ${mode}, graphics ${protocol ?? 'none'}, cell ${measured ? `${cell.w}x${cell.h}px` : 'unknown (assuming 1:2)'}, aspect ${aspect.toFixed(2)}`);
 
   // ---- state
   let settings = { ...initialSettings };
@@ -54,7 +59,7 @@ export async function runViewer({ frames, reels, bridge, opts, settings: initial
   let lookEdited = false;
   let plain = opts.color === 'none';
   const state = { paused: false, reel: 1, fps: 0, note: '', noteUntil: 0 };
-  const panel = new Panel({ defaults: info.defaults, lookLabel });
+  const panel = new Panel({ defaults: { ...ALL_DEFAULTS, ...info.defaults }, lookLabel });
   let panelOpen = false;
   let recording = null;
   let lastFrame = null;
@@ -252,6 +257,10 @@ export async function runViewer({ frames, reels, bridge, opts, settings: initial
       case 'e':
         await set('edges', !settings.edges);
         break;
+      case 'g':
+        await set('glyphs', settings.glyphs === 'shape' ? 'brightness' : 'shape');
+        note(settings.glyphs === 'shape' ? 'characters chosen by shape (g to switch)' : 'characters chosen by brightness, like the app (g to switch)');
+        break;
       case 'i':
         await set('invert', !settings.invert);
         break;
@@ -358,8 +367,13 @@ export async function runViewer({ frames, reels, bridge, opts, settings: initial
       if (!hideBehindPanel) {
         if (effective === 'text') {
           const maxCols = Math.min(settings.cols, opts.cols ?? Infinity);
-          const cols = fitCols({ termCols: region.w, termRows: region.h, srcW: frame.w, srcH: frame.h, maxCols, reserveRows: 0 });
-          const grid = await bridge.render(frame, { cols, time, color: d !== 'none' });
+          // Shape-matched characters use the terminal's real cell shape; the app's own mapping assumes 1:2.
+          const byShape = settings.glyphs === 'shape' && ShapeRenderer.supports(bridge, settings.style);
+          const useAspect = byShape ? aspect : 0.5;
+          const cols = fitCols({ termCols: region.w, termRows: region.h, srcW: frame.w, srcH: frame.h, maxCols, reserveRows: 0, aspect: useAspect });
+          const grid = byShape
+            ? await shapes.render(frame, settings, { cols, rows: rowsFor(frame.w, frame.h, cols, useAspect), aspect: useAspect })
+            : await bridge.render(frame, { cols, time, color: d !== 'none' });
           if (grid) {
             let lines;
             if (compare && d !== 'none' && grid.cols >= 6) {
@@ -469,7 +483,7 @@ export async function runViewer({ frames, reels, bridge, opts, settings: initial
         ` reel ${state.reel}${state.paused ? ' ❚❚' : ''}${recording ? ` ● REC ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : ''}`,
         `${state.fps.toFixed(0)} fps${audio ? ` · ${audio.failed ? '♪ ✗' : audio.muted ? '♪ muted' : `♪ ${volumePct}%`}` : ''}`,
         `${look}${lookEdited ? '*' : ''}${compare ? ` · compare ${Math.round(compare * 100)}%` : ''} · ${shown}${effective === 'image' ? `(${protocol})` : ''}${effective !== 'text' && res < 0.98 ? ` ${Math.round(res * 100)}%` : ''}`,
-        state.note || 'j/k reel · space pause · Tab settings · a mute · l look · v render · x save · r rec · q quit',
+        state.note || 'j/k reel · space pause · Tab settings · a mute · l look · v render · g glyphs · x save · r rec · q quit',
       ].join(' · ');
       screen.put(term.rows - 1, 0, `${'\x1b[7m'}${hud.length > term.cols ? hud.slice(0, term.cols) : hud.padEnd(term.cols)}`);
       screen.flush();

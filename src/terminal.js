@@ -2,14 +2,20 @@ const ESC = '\x1b[';
 
 /**
  * Largest column count whose rendered height still fits the area.
- * A terminal cell is about twice as tall as it is wide, so a source of srcW x srcH needs
- * round(srcH / srcW * cols / 2) rows.
+ * A cell is `aspect` as wide as it is tall (about 0.5 in most terminals), so a source of srcW x srcH needs
+ * round(srcH / srcW * cols * aspect) rows.
  */
-export function fitCols({ termCols, termRows, srcW, srcH, maxCols, reserveRows = 1 }) {
+export function fitCols({ termCols, termRows, srcW, srcH, maxCols, reserveRows = 1, aspect = 0.5 }) {
   const availRows = Math.max(1, termRows - reserveRows);
-  const byHeight = Math.floor((availRows * 2 * srcW) / srcH);
+  const byHeight = Math.floor((availRows * srcW) / (srcH * aspect));
   const limit = Math.min(termCols, byHeight, maxCols ?? Infinity);
   return Math.max(8, limit);
+}
+
+/** Cell width / height from the terminal's reported cell size in pixels; null/garbage gives the usual 0.5. */
+export function cellAspect(cell) {
+  if (!cell || !(cell.w > 0) || !(cell.h > 0)) return 0.5;
+  return Math.min(0.8, Math.max(0.35, cell.w / cell.h));
 }
 
 /**

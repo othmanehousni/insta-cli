@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AsciiBridge, DEFAULT_APP_URL, flagSettings } from './ascii.js';
+import { ShapeRenderer, rowsFor } from './shapes.js';
 import { choosePlayer, describePlayers, startAudio, testPlayer } from './audio.js';
 import { launchSession } from './browser.js';
 import { FrameSource } from './capture.js';
@@ -23,6 +24,7 @@ import { saveStill } from './export.js';
 import {
   DEFAULT_LOOK,
   LOOK_IDS,
+  lookFor,
   PALETTE_IDS,
   PIXEL_ONLY_STYLES,
   STYLE_IDS,
@@ -55,13 +57,15 @@ Keys while watching
   o       compare with the original  ([ ] move the divider)
   a mute · 9 / 0 volume · , / . sound delay
   s style · c colour · p palette · e outlines · i invert · + / - detail
+  g letters picked by shape / by brightness (text rendering)
 
 Look  (everything the Devault app offers: 13 styles, its preset looks and every slider)
-      --look <id>        start from a look [${DEFAULT_LOOK}]; ${LOOK_IDS.slice(0, 6).join(', ')}, … (see --list looks)
+      --look <id>        start from a look [${DEFAULT_LOOK}, or ascii once you pick a --style]; ${LOOK_IDS.slice(0, 6).join(', ')}, … (see --list looks)
   -s, --style <id>       ${STYLE_IDS.join(' | ')}
       --ramp <chars>     your own character ramp, light to dense, e.g. " .:-=+*#%@"
   -c, --color <mode>     ${COLORS.join(' | ')}   (none = plain text)
       --palette <id>     ${PALETTE_IDS.join(' | ')}
+      --glyphs <how>     shape | brightness: how each character is chosen in text rendering [shape]
       --no-edges         turn off outline tracing
       --invert           invert brightness
   -w, --cols <n>         Detail (columns), 20-400
@@ -103,7 +107,8 @@ Account & browser
 `;
 
 const OPTIONS = {
-  look: { type: 'string', default: DEFAULT_LOOK },
+  look: { type: 'string' },
+  glyphs: { type: 'string' },
   style: { type: 'string', short: 's' },
   ramp: { type: 'string' },
   color: { type: 'string', short: 'c' },
@@ -174,8 +179,13 @@ function resolveOptions(v) {
     if (!Number.isFinite(audioDelay) || audioDelay < 0 || audioDelay > 5000) throw new UsageError(`--audio-delay must be "auto" or a number of milliseconds from 0 to 5000 (got "${v['audio-delay']}")`);
   }
   if (v['audio-player'].trim() === '') throw new UsageError('--audio-player is empty.');
+  const sets = (v.set ?? []).map(parseSetting);
+  // Choosing a style yourself (--style, --ramp or --set style=…) means you want that style, not the photo look's
+  // picture-under-the-letters: it starts from the pure-ASCII look unless you also pick a look.
+  const chose = sets.some(([k]) => k === 'style' || k === 'customRamp');
   return {
-    look: oneOf('look', v.look, LOOK_IDS),
+    look: oneOf('look', lookFor({ look: v.look, style: v.style || chose || undefined, ramp: v.ramp }), LOOK_IDS),
+    glyphs: v.glyphs === undefined ? undefined : oneOf('glyphs', v.glyphs, ['shape', 'brightness']),
     style: v.style === undefined ? undefined : oneOf('style', v.style, STYLE_IDS),
     ramp: v.ramp,
     color: v.color === undefined ? undefined : oneOf('color', v.color, COLORS),
@@ -183,7 +193,7 @@ function resolveOptions(v) {
     edges: v['no-edges'] ? false : undefined,
     invert: v.invert ? true : undefined,
     cols: v.cols === undefined ? undefined : positiveInt('cols', v.cols),
-    sets: (v.set ?? []).map(parseSetting),
+    sets,
     list: v.list,
     render: oneOf('render', v.render, ['auto', 'text', 'image', 'blocks']),
     graphics: oneOf('graphics', v.graphics, ['auto', 'kitty', 'iterm2']),
@@ -467,7 +477,11 @@ async function printOnce({ frames, bridge, opts, settings, baseDepth }) {
         maxCols: settings.cols,
         reserveRows: 0,
       });
-    const grid = await bridge.render(frame, { cols, time: 0, color: depth !== 'none' });
+    // Characters picked by shape when the style allows it (see src/shapes.js); the app's own mapping otherwise.
+    const byShape = settings.glyphs === 'shape' && ShapeRenderer.supports(bridge, settings.style);
+    const grid = byShape
+      ? await new ShapeRenderer(bridge).render(frame, settings, { cols, rows: rowsFor(frame.w, frame.h, cols), aspect: 0.5 })
+      : await bridge.render(frame, { cols, time: 0, color: depth !== 'none' });
     if (!grid) throw new FriendlyError('The ASCII engine returned nothing for this frame.');
     lines = composeLines(grid, settings, { depth });
   }

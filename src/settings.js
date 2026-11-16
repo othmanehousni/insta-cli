@@ -80,8 +80,30 @@ export const OWN_LOOKS = [
     },
   },
 ];
+OWN_LOOKS.push({
+  id: 'ascii',
+  label: 'Pure ASCII',
+  hint: 'Only characters, on a plain background: the picture is built out of the letters and nothing shows through. Coloured by the picture, with a little extra contrast. This is what picking a --style on its own gives you.',
+  patch: {
+    colorMode: 'source',
+    boost: 30,
+    overlay: false,
+    edges: true,
+    bloom: 0,
+    vignette: 0,
+    contrast: 20,
+    cutoff: 2,
+    cols: 250,
+  },
+});
 export const LOOK_IDS = [...OWN_LOOKS.map((l) => l.id), ...APP_LOOKS.map((l) => l.id)];
 export const DEFAULT_LOOK = 'photo';
+/** The look to start from: the realistic one by default, pure characters once you have chosen a style yourself. */
+export const lookFor = ({ look, style, ramp }) => look ?? (style || ramp ? 'ascii' : DEFAULT_LOOK);
+
+/** Settings that belong to this CLI rather than the app (the engine never sees them). */
+export const OWN_DEFAULTS = { glyphs: 'shape', sharpen: 80 };
+export const OWN_KEYS = Object.keys(OWN_DEFAULTS);
 
 /** The app's defaults (engine `defaults`), kept for validation and `--list`. */
 export const DEFAULTS = {
@@ -140,6 +162,9 @@ export const DEFAULTS = {
   exportScale: 2,
   exportSeconds: 5,
 };
+
+/** Every setting with its starting value: the app's own plus this CLI's. */
+export const ALL_DEFAULTS = { ...DEFAULTS, ...OWN_DEFAULTS };
 
 const sty = (...ids) => (s) => ids.includes(s.style);
 const notPixel = (s) => s.style !== 'particle' && s.style !== 'film';
@@ -252,6 +277,24 @@ export const SECTIONS = [
     ],
   },
   {
+    id: 'text',
+    title: 'Text rendering',
+    own: true,
+    visible: (s) => FONT_STYLES.includes(s.style),
+    controls: [
+      {
+        key: 'glyphs',
+        type: 'choice',
+        label: 'Character choice',
+        choices: [{ value: 'shape', label: 'Shape-matched' }, { value: 'brightness', label: 'Brightness (app)' }],
+        where: 'text',
+        own: true,
+        note: 'shape: each cell\'s letter is chosen by how well its shape fits the detail inside the cell',
+      },
+      { key: 'sharpen', type: 'range', label: 'Detail boost', min: 0, max: 100, step: 5, visible: (s) => s.glyphs === 'shape', where: 'text', own: true },
+    ],
+  },
+  {
     id: 'effects',
     title: 'Effects',
     controls: [
@@ -358,7 +401,7 @@ export function stepValue(control, value, dir, big = false) {
  * @param sets      [[key, value], ...] from --set
  */
 export function resolveSettings(info, { look = DEFAULT_LOOK, flags = {}, sets = [] } = {}) {
-  const state = { ...info.defaults };
+  const state = { ...info.defaults, ...OWN_DEFAULTS };
   Object.assign(state, lookPatch(info, look));
   for (const [k, v] of Object.entries(flags)) if (v !== undefined) state[k] = v;
   for (const [k, v] of sets) state[k] = v;
@@ -394,11 +437,11 @@ export function listing(what) {
   } else if (what === 'settings') {
     lines.push('Settings for --set key=value  (default in brackets; "text" = honoured in text rendering, "image" = needs image/blocks rendering)');
     for (const s of SECTIONS) {
-      lines.push('', `${s.title}${s.visible ? '  (only for some styles)' : ''}`);
+      lines.push('', `${s.title}${s.own ? '  (settings of this CLI, not the app)' : s.visible ? '  (only for some styles)' : ''}`);
       for (const c of s.controls) {
         const range =
           c.type === 'range' ? `${c.min}..${c.max}` : c.type === 'toggle' ? 'on|off' : c.type === 'choice' ? c.choices.map((x) => x.value).join('|') : c.type === 'color' ? '#RRGGBB' : `text, ≤${c.max}`;
-        lines.push(`  ${pad(c.key, 14)} ${pad(range, 38)} [${DEFAULTS[c.key]}]  ${c.label}${c.where === 'image' ? '  (image)' : c.where === 'text~' ? '  (text: approximated)' : ''}`);
+        lines.push(`  ${pad(c.key, 14)} ${pad(range, 38)} [${ALL_DEFAULTS[c.key]}]  ${c.label}${c.own ? '  (this CLI)' : c.where === 'image' ? '  (image)' : c.where === 'text~' ? '  (text: approximated)' : ''}`);
       }
     }
   } else {

@@ -24,19 +24,61 @@ There are three ways to draw, and all three come from the app's own engine:
 
 The default look, **`photo`**, is the "realistic but still ASCII" one: the picture stays visible underneath
 detailed, true-colour letters. It uses the app's own *"Keep the image underneath"* feature. Raise **Image
-visibility** (`--set underlay=80`) for more photo, lower it for more ASCII. The other 18 looks are the app's own
-presets:
+visibility** (`--set underlay=80`) for more photo, lower it for more ASCII. **`ascii`** is the pure-characters look
+(below). The other 18 looks are the app's own presets:
 
 ![The app's looks, rendered by this CLI](docs/looks.jpg)
+
+### Pure ASCII (`--style classic`) and where the extra detail comes from
+
+Choosing a style yourself (`--style classic`, `--ramp`, `--set style=…`) starts from the **`ascii`** look, not `photo`:
+only characters, on one plain backdrop, coloured by the picture. Nothing of the picture is painted behind them, so it
+is not the video with a filter on top. (`--look photo --style classic` brings the picture back underneath.)
+
+A terminal can only have as many characters as it has cells, so the extra detail has to come from choosing each
+character better. The app, like most converters, averages a cell to one brightness and looks it up in a ramp. This
+CLI treats a character as the *shape* it is: each cell is sampled on a 3 × 6 grid and the character whose shape
+best fits that pattern is chosen (`-` or `=` for a horizontal feature, `:` or `|` for a vertical one, `.` for
+something low in the cell), with brightness still decided first. It applies to the ramp styles (classic, detailed,
+minimal, binary, custom) and uses the terminal's real cell shape (asked with `CSI 16 t`; 1:2 is assumed when it
+doesn't answer), so the picture is not stretched in terminals whose cells are not exactly twice as tall as wide.
+
+![Original, the app's brightness-only mapping, and shape-matched characters, both with the same settings at 130 columns](docs/shape-matching.jpg)
+
+<sub>A public-domain NASA photograph at 130 columns, `--style classic`. Left to right: the original, the app's own
+brightness-only mapping, shape-matched characters (the default). Same look, same settings.</sub>
+
+What was measured (two public-domain test photographs, `--style classic`, rendered to a picture and compared with
+the source frame; the constants and the sweeps are in `src/shapes.js`):
+
+| | app's mapping | shape-matched |
+| --- | --- | --- |
+| structural similarity (SSIM), viewed at ¼ size | 0.196 | **0.261** |
+| structural similarity (SSIM), viewed at ½ size | 0.154 | **0.202** |
+| do the picture's edges land on the same cells? (correlation, 130 columns) | 0.41 | **0.84** |
+| does a cell get denser where the picture is brighter? (rank correlation) | 0.90 | **0.97** |
+| how much of the ramp is used (entropy, bits) | **3.3** | 2.6 |
+
+**What this does not show, honestly.** The last row goes the other way: shape matching spends more cells on the
+densest characters (`@` and `%` are 47 % of cells, against 24 %), because characters with a lot of internal structure
+(`+ = - : #`) lose to plainer ones in a smooth area, where there is no pattern for them to follow. Looking at the
+image above at 1:1, the app's output has more tonal *banding* in skin and hair, which reads as ASCII-art texture;
+some of that is real and some is aliasing (its edge correlation is 0.41, so much of its fine variation is not where
+the picture's edges are). The numbers say shape matching is closer to the photograph; whether it looks better is partly
+taste, so it is one key away: **`g`** switches between the two while watching, `--glyphs brightness` starts with the
+app's mapping, and `--set sharpen=0..100` sets how hard it chases detail. Shape matching does not use the app's
+`scatter`, `shimmer` or edge strength / smoothing controls; `--glyphs brightness` keeps those.
 
 ### Resolution
 
 - **Image mode** is as sharp as the terminal's pixels (up to ~2400 px on a side) and draws up to 400 glyph
   columns, versus ~45 for a portrait reel in plain letters. `--scale` raises or lowers it.
-- **Text mode** can never have more cells than the terminal has, so it gets its realism from colour instead:
-  every cell's background is the picture's colour. The letters are calibrated down for the terminal (a terminal
-  letter covers far more of its cell than the app's few-pixel glyphs do), found by comparing real renders at 1:1.
-  Braille (`--style braille`) packs 2×4 dots into each cell and is the most photographic text style.
+- **Text mode** can never have more cells than the terminal has: the number of columns is what fits, so a smaller
+  font or a bigger window is the one thing that adds real resolution. Within that, the `photo` look gets its
+  realism from colour (every cell's background is the picture's colour; the letters are calibrated down for the
+  terminal, found by comparing real renders at 1:1) and the `ascii` look from choosing each letter by shape (above).
+  Braille (`--style braille`) packs 2×4 dots into each cell and is the most photographic text style, but it is not
+  ASCII.
 
 ## How it works
 
@@ -115,6 +157,7 @@ insta-ascii
 | `9` / `0` | volume down / up |
 | `,` / `.` | move the sound earlier / later against the picture (50 ms) |
 | `s` `c` `p` `e` `i` | cycle style · colour · palette · outlines · invert |
+| `g` | choose letters by shape / by brightness (text rendering) |
 | `+` / `-` | more / less detail |
 | `q` | quit |
 
@@ -127,7 +170,7 @@ hides what the app would hide (for example, edge strength only appears while "Tr
 | In the app | Here |
 | --- | --- |
 | 13 styles: classic, detailed, blocks, tiles, minimal, binary, braille, dots, dither, bricks, particle, film, custom | `--style`, `s`, or the panel; `insta-ascii --list styles` |
-| the preset **looks** rail (18 looks) | `--look <id>`, `l` / `L`; `--list looks`. Their settings are read from the live app, not copied |
+| the preset **looks** rail (18 looks) | `--look <id>`, `l` / `L`; `--list looks`. Their settings are read from the live app, not copied. This CLI adds two: `photo` and `ascii` |
 | every slider, switch and choice (all 52 controls: detail, spacing, tile gaps, particles, film, tone, colour, background, contours, effects…) | the panel, or `--set key=value` for any of them; `--list settings` shows keys, ranges and defaults |
 | palettes (7), colour modes (original / palette / mono), background modes (dark / black / paper / custom / clear) | `--palette`, `--color`, `--set bgMode=paper`, … |
 | effects: bloom, scanlines, curvature, chromatic aberration, vignette, grain, flicker, twinkle, animate | panel or `--set`. **Bloom, curvature and chromatic aberration are pixel effects**: image / blocks rendering only. Vignette, scanlines, grain and flicker are also emulated per cell in text |
@@ -147,11 +190,12 @@ at 1920 px on the long side, recordings 1280 px). Recordings have no sound.
 
 | Option | Meaning | Default |
 | --- | --- | --- |
-| `--look <id>` | start from a look (`insta-ascii --list looks`) | `photo` |
+| `--look <id>` | start from a look (`insta-ascii --list looks`) | `photo`, or `ascii` once you choose a style |
 | `-s, --style <id>` | any of the 13 styles | the look's |
 | `--ramp <chars>` | your own ramp, light to dense | |
 | `-c, --color <mode>` | `source` `palette` `mono` `none` (none = plain text) | the look's |
 | `--palette <id>` | the app's palette | the look's |
+| `--glyphs <how>` | `shape` or `brightness`: how each character is chosen in text rendering (see above) | `shape` |
 | `--no-edges` · `--invert` | outline tracing off · invert brightness | |
 | `-w, --cols <n>` | Detail (columns), 20–400. In text it is also capped by what fits the terminal | the look's |
 | `--set <key=value>` | any app setting, repeatable | |
@@ -273,6 +317,9 @@ quit instantly and silently when they cannot open an audio output. Typical messa
   full size, so the viewer **lowers the image resolution automatically** to keep up with `--fps` (the HUD shows the
   percentage), reaching ~8 fps at 30 %. With a GPU the render itself should be far faster, but I could not measure
   that. `--scale` sets the maximum resolution.
+- **Shape matching is measured, not proven to look better.** The metrics above favour it, a still crop at 1:1 shows the
+  app's mapping with more tonal banding, and I had no way to put both in front of a real terminal's eyes. Flip it with
+  `g` and decide. In a perfectly flat area it can also pick a directional character (`\`) where there is no direction.
 - Text rendering draws 11 of the 13 styles; `film` and `particle` need pixels. Text mode ignores the app's font,
   letter spacing and non-normal blend modes (the terminal chooses its own font), and does not do bloom, curvature or
   chromatic aberration.
@@ -293,13 +340,17 @@ quit instantly and silently when they cannot open an audio output. Typical messa
 npm test
 ```
 
-260 tests, about two and a half minutes. Pure units: terminal composition, fitting, key parsing,
+333 tests, about four minutes. Pure units: terminal composition, fitting, key parsing,
 settings and the panel, the Kitty / iTerm2 encoders, export. Against the **live** Devault app (skipped if it can't be
 reached): that the catalog here matches the app's styles, palettes, looks and defaults; every text style's character
-set; **all 13 styles and all 19 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG
+set; **all 13 styles and all 20 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG
 sizes; Compare; the network lockdown. End to end: the CLI against a local reels feed and local media, and the
 interactive viewer in a **real pty** (needs `script`), including both image protocols. Also the login state machine
 against a mock login server, the cross-origin-video fallback and real `ffmpeg` recording (needs `ffmpeg`).
+For shape-matched letters: the matcher's maths on hand-made data (tone, sharpening, mask scaling, colour, the glyph choice
+itself), then against the live engine: sampled cells and rasterised glyph shapes, no saturation on a brightness ramp,
+horizontal and vertical bars of equal brightness getting different characters, a pattern-error comparison with the app's
+mapping, and `--style classic` printing only the style's own characters on one plain backdrop.
 For sound: the audio tap against real 440 Hz and 880 Hz tones inside a *muted* video (frequency, level, following
 reel changes, silent videos, mute, volume), the player process with a fake clock and fake player, the player
 command lines (including the real `ffplay` decoding our PCM on SDL's dummy output), lip-sync, and the viewer in a
@@ -312,6 +363,7 @@ src/viewer.js        the live loop, keys, adaptive resolution
 src/settings.js      the app's controls as data; looks; --set parsing; --list
 src/panel.js         the settings sidebar
 src/ascii.js         the bridge to the Devault app (+ network lockdown)
+src/shapes.js        shape-aware character choice for text rendering (the `ascii` look)
 src/engine-page.js   code that runs inside the app's page
 src/terminal.js      composing cells (tint, effects), fitting, half-blocks, full-screen drawing
 src/protocols.js     Kitty / iTerm2 image protocols, terminal detection, cell size
