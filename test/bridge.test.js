@@ -276,7 +276,7 @@ describe('AsciiBridge (live Devault app)', () => {
       assert.deepEqual([...leftHalf.subarray(0, 3)], [0, 0, 0], 'its top-left corner is the black background');
     });
 
-    it('draws something for every one of the 13 styles', async (t) => {
+    it('draws something for every one of the 14 styles', async (t) => {
       if (skipReason) return t.skip(skipReason);
       for (const style of STYLES) {
         const patch = { style: style.id, colorMode: 'source', bgMode: 'black', ...(style.id === 'custom' ? { customRamp: ' .oO@' } : {}) };
@@ -287,7 +287,7 @@ describe('AsciiBridge (live Devault app)', () => {
       }
     });
 
-    it('draws something for every look (the app\'s 18 presets and ours)', async (t) => {
+    it('draws something for every look (the app\'s 19 presets and ours)', async (t) => {
       if (skipReason) return t.skip(skipReason);
       for (const id of LOOK_IDS) {
         await use(id);
@@ -295,6 +295,23 @@ describe('AsciiBridge (live Devault app)', () => {
         assert.ok(raw, id);
         assert.ok(variety(raw.data) > 0.02, `look ${id} drew a blank image (${variety(raw.data)})`);
       }
+    });
+
+    it('the drift controls really change the picture', async (t) => {
+      if (skipReason) return t.skip(skipReason);
+      const sample = async (extra) => {
+        await use('drift', { animate: true, ...extra });
+        return (await bridge.renderImage(FRAME, { cols: 60, w: 240, h: 426, encode: 'raw', rawW: 60, rawH: 106, time: 2.5 })).data;
+      };
+      const differ = (a, b) => {
+        let n = 0;
+        for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 30) n++;
+        return n / (a.length / 4);
+      };
+      const base = await sample({});
+      assert.ok(differ(base, await sample({ dAmount: 0 })) > 0.002, 'Amount: nothing peels off at 0');
+      assert.ok(differ(base, await sample({ dFill: 40 })) > 0.002, 'Pixel size');
+      assert.ok(differ(await sample({ dAngle: 0 }), await sample({ dAngle: 180 })) > 0.002, 'Direction');
     });
 
     it('the pixel effects really change the picture', async (t) => {

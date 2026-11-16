@@ -166,14 +166,14 @@ describe('CLI --once against a mock reels feed', () => {
     assert.ok(lit(few) < lit(all), `${lit(few)} < ${lit(all)}`);
   });
 
-  it('every style the app has can be printed, pixel-only ones as half-block pixels', async (t) => {
+  it('every style the app has can be printed, pixel-only ones (film, particle, drift) as half-block pixels', async (t) => {
     if (skipReason) return t.skip(skipReason);
     for (const style of ['classic', 'detailed', 'blocks', 'tiles', 'minimal', 'binary', 'braille', 'dots', 'dither', 'lego', 'custom']) {
       const r = await run(['--look', 'mono', '--style', style, '--color', 'none', '--cols', '24']);
       assert.equal(r.code, 0, `${style}: ${r.stderr}`);
       assert.ok(/\S/.test(r.stdout), `${style} printed nothing`);
     }
-    for (const style of ['film', 'particle']) {
+    for (const style of ['film', 'particle', 'drift']) {
       const r = await run(['--look', 'mono', '--style', style, '--depth', 'truecolor', '--cols', '24']);
       assert.equal(r.code, 0, `${style}: ${r.stderr}`);
       assert.ok(r.stdout.includes('▀'), `${style} should be drawn as half-block pixels`);

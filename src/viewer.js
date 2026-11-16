@@ -356,7 +356,7 @@ export async function runViewer({ frames, reels, bridge, opts, settings: initial
       lastFrame = frame;
       frameNo += 1;
 
-      // pixel-only styles (film, particle) cannot be written as characters
+      // pixel-only styles (film, particle, drift) cannot be written as characters
       const pixelOnly = PIXEL_ONLY_STYLES.includes(settings.style);
       const effective = mode === 'text' && pixelOnly ? (protocol ? 'image' : 'blocks') : mode;
       const time = clock();

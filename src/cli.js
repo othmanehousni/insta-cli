@@ -59,7 +59,7 @@ Keys while watching
   s style · c colour · p palette · e outlines · i invert · + / - detail
   g letters picked by shape / by brightness (text rendering)
 
-Look  (everything the Devault app offers: 13 styles, its preset looks and every slider)
+Look  (everything the Devault app offers: 14 styles, its preset looks and every slider)
       --look <id>        start from a look [${DEFAULT_LOOK}, or ascii once you pick a --style]; ${LOOK_IDS.slice(0, 6).join(', ')}, … (see --list looks)
   -s, --style <id>       ${STYLE_IDS.join(' | ')}
       --ramp <chars>     your own character ramp, light to dense, e.g. " .:-=+*#%@"
@@ -459,7 +459,7 @@ async function printOnce({ frames, bridge, opts, settings, baseDepth }) {
 
   let lines;
   if (pixelOnly) {
-    // film and particles are not made of characters: draw the app's canvas as half-block pixels
+    // film, particles and drift are not made of characters: draw the app's canvas as half-block pixels
     const w = opts.cols ?? Math.min(process.stdout.columns || 80, 100);
     const h = Math.max(2, Math.round((frame.h / frame.w) * w) & ~1);
     const img = await bridge.renderImage(frame, { cols: settings.cols, w: w * 4, h: h * 4, encode: 'raw', rawW: w, rawH: h });

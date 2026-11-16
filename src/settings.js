@@ -22,6 +22,7 @@ export const STYLES = [
   { id: 'lego', label: 'Bricks', text: true },
   { id: 'particle', label: 'Particle', text: false },
   { id: 'film', label: 'Film', text: false },
+  { id: 'drift', label: 'Drift', text: false },
   { id: 'custom', label: 'Custom', text: true },
 ];
 export const STYLE_IDS = STYLES.map((s) => s.id);
@@ -45,6 +46,7 @@ export const APP_LOOKS = [
   ['bricks', 'Brick mosaic'],
   ['tiles', 'Letter tiles'],
   ['film', 'Film'],
+  ['drift', 'Drift'],
   ['particle', 'Particle'],
   ['tiles-grey', 'Grey tiles'],
   ['ascii-gradient', 'ASCII Gradient'],
@@ -128,6 +130,11 @@ export const DEFAULTS = {
   pGather: 70,
   pDepth: 50,
   pMelt: false,
+  dAmount: 55,
+  dDist: 55,
+  dAngle: 152,
+  dShimmer: 60,
+  dFill: 84,
   brightness: 0,
   contrast: 0,
   gamma: 1,
@@ -167,7 +174,10 @@ export const DEFAULTS = {
 export const ALL_DEFAULTS = { ...DEFAULTS, ...OWN_DEFAULTS };
 
 const sty = (...ids) => (s) => ids.includes(s.style);
-const notPixel = (s) => s.style !== 'particle' && s.style !== 'film';
+/** The app shows Detail for every style but particles and film (drift uses it as its pixel size). */
+const hasDetail = (s) => s.style !== 'particle' && s.style !== 'film';
+/** ... and hides On image and Contours for all three pixel-only styles. */
+const notPixel = (s) => !PIXEL_ONLY_STYLES.includes(s.style);
 const on = (key) => (s) => !!s[key];
 const signed = (n) => `${n > 0 ? '+' : ''}${n}`;
 const choice = (...values) => values.map((v) => ({ value: v, label: v }));
@@ -187,7 +197,7 @@ export const SECTIONS = [
       { key: 'customRamp', type: 'text', label: 'Custom characters, sparse → dense', max: 40, visible: sty('custom'), where: 'text' },
       { key: 'ditherPattern', type: 'choice', label: 'Dither pattern', choices: choice('bayer4', 'bayer8', 'noise'), visible: sty('dither'), where: 'text' },
       { key: 'font', type: 'choice', label: 'Font', choices: choice('geist', 'system'), visible: (s) => FONT_STYLES.includes(s.style), where: 'image' },
-      { key: 'cols', type: 'range', label: 'Detail (columns)', min: 20, max: 400, step: 1, visible: notPixel, where: 'text~', note: 'text mode never uses more columns than fit the terminal' },
+      { key: 'cols', type: 'range', label: 'Detail (columns)', min: 20, max: 400, step: 1, visible: hasDetail, where: 'text~', note: 'text mode never uses more columns than fit the terminal' },
       { key: 'spacing', type: 'range', label: 'Letter spacing', min: 0.4, max: 0.9, step: 0.01, fmt: (n) => n.toFixed(2), visible: (s) => FONT_STYLES.includes(s.style), where: 'text~' },
       { key: 'tileGap', type: 'range', label: 'Tile gaps', min: 0, max: 100, step: 1, fmt: (n) => (n === 0 ? 'None' : `${n}`), visible: sty('tiles'), where: 'text' },
       { key: 'tileSoft', type: 'range', label: 'Soft edges', min: 0, max: 100, step: 1, fmt: (n) => (n === 0 ? 'None' : `${n}`), visible: sty('tiles'), where: 'text' },
@@ -216,6 +226,18 @@ export const SECTIONS = [
       { key: 'fBlur', type: 'range', label: 'Soft blur', min: 0, max: 100, step: 1, where: 'image' },
       { key: 'fFringe', type: 'range', label: 'Colour fringe', min: 0, max: 100, step: 1, where: 'image' },
       { key: 'fWarm', type: 'range', label: 'Warmth', min: 0, max: 100, step: 1, where: 'image' },
+    ],
+  },
+  {
+    id: 'drift',
+    title: 'Drift',
+    visible: sty('drift'),
+    controls: [
+      { key: 'dAmount', type: 'range', label: 'Amount', min: 0, max: 100, step: 1, where: 'image' },
+      { key: 'dDist', type: 'range', label: 'Distance', min: 5, max: 100, step: 1, where: 'image' },
+      { key: 'dAngle', type: 'range', label: 'Direction', min: 0, max: 360, step: 1, fmt: (n) => `${n}°`, where: 'image' },
+      { key: 'dShimmer', type: 'range', label: 'Shimmer', min: 0, max: 100, step: 1, fmt: (n) => (n === 0 ? 'Still' : `${n}`), where: 'image' },
+      { key: 'dFill', type: 'range', label: 'Pixel size', min: 40, max: 100, step: 1, fmt: (n) => `${n}%`, where: 'image' },
     ],
   },
   {

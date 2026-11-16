@@ -58,17 +58,17 @@ describe('the catalog covers every setting of the app', () => {
       if (c.type === 'color') assert.match(d, /^#[0-9A-F]{6}$/);
     }
   });
-  it('has the app\'s 13 styles, 7 palettes and 18 preset looks, plus our own', () => {
-    assert.equal(STYLES.length, 13);
-    assert.deepEqual(PIXEL_ONLY_STYLES, ['particle', 'film']);
+  it('has the app\'s 14 styles, 7 palettes and 19 preset looks, plus our own', () => {
+    assert.equal(STYLES.length, 14);
+    assert.deepEqual(PIXEL_ONLY_STYLES, ['particle', 'film', 'drift']);
     assert.equal(PALETTE_IDS.length, 7);
-    assert.equal(APP_LOOKS.length, 18);
-    assert.equal(LOOK_IDS.length, 20); // photo and ascii are ours
+    assert.equal(APP_LOOKS.length, 19);
+    assert.equal(LOOK_IDS.length, 21); // photo and ascii are ours
     assert.deepEqual(CONTROL_BY_KEY.style.choices.map((c) => c.value), STYLE_IDS);
     assert.deepEqual(CONTROL_BY_KEY.palette.choices.map((c) => c.value), PALETTE_IDS);
   });
   it('the sections are the app\'s, in order, with this CLI\'s text-rendering section before Effects', () => {
-    assert.deepEqual(SECTIONS.map((s) => s.title), ['Style', 'Particles', 'Film', 'Letters', 'On image', 'Tone', 'Colour', 'Contours', 'Text rendering', 'Effects']);
+    assert.deepEqual(SECTIONS.map((s) => s.title), ['Style', 'Particles', 'Film', 'Drift', 'Letters', 'On image', 'Tone', 'Colour', 'Contours', 'Text rendering', 'Effects']);
   });
   it('the settings that only this CLI has are marked as such, and the app\'s engine never sees them', () => {
     assert.deepEqual(OWN_KEYS.sort(), ['glyphs', 'sharpen']);
@@ -91,6 +91,25 @@ describe('visibility follows the app\'s rules', () => {
   it('film shows the film controls and no colour section', () => {
     const t = titles({ style: 'film' });
     assert.ok(t.includes('Film') && !t.includes('Colour') && !t.includes('Particles'));
+  });
+  it('drift shows the drift controls, keeps Detail (its pixel size follows it), and hides On image and Contours', () => {
+    const t = titles({ style: 'drift' });
+    assert.deepEqual(t, ['Style', 'Drift', 'Tone', 'Colour', 'Effects']);
+    const k = keys({ style: 'drift' });
+    for (const key of ['dAmount', 'dDist', 'dAngle', 'dShimmer', 'dFill', 'cols']) assert.ok(k.includes(key), key);
+    assert.ok(!k.includes('overlay') && !k.includes('edges'));
+    assert.ok(!titles({ style: 'classic' }).includes('Drift'));
+  });
+  it('the drift controls have the app\'s ranges, formats and defaults', () => {
+    const c = (k) => CONTROL_BY_KEY[k];
+    assert.deepEqual([c('dAmount').min, c('dAmount').max, DEFAULTS.dAmount], [0, 100, 55]);
+    assert.deepEqual([c('dDist').min, c('dDist').max, DEFAULTS.dDist], [5, 100, 55]);
+    assert.deepEqual([c('dAngle').min, c('dAngle').max, DEFAULTS.dAngle], [0, 360, 152]);
+    assert.deepEqual([c('dFill').min, c('dFill').max, DEFAULTS.dFill], [40, 100, 84]);
+    assert.equal(c('dAngle').fmt(152), '152°');
+    assert.equal(c('dShimmer').fmt(0), 'Still');
+    assert.equal(c('dShimmer').fmt(60), '60');
+    assert.equal(c('dFill').fmt(84), '84%');
   });
   it('tiles show tile gaps, soft edges and the letters section', () => {
     assert.ok(titles({ style: 'tiles' }).includes('Letters'));

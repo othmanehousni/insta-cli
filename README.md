@@ -2,7 +2,7 @@
 
 Your Instagram **Reels feed, in the terminal**. The CLI signs in to your account, opens the Reels
 page, and renders the playing video with the
-[Devault ASCII generator](https://devault-ascii.pages.dev/ascii-generator/app/): its 13 styles, its
+[Devault ASCII generator](https://devault-ascii.pages.dev/ascii-generator/app/): its 14 styles, its
 preset looks and every one of its controls. **With sound.**
 
 ![The same frame as the original, as the app's own canvas in the terminal (image mode), and as real characters (text mode)](docs/preview.jpg)
@@ -25,7 +25,7 @@ There are three ways to draw, and all three come from the app's own engine:
 The default look, **`photo`**, is the "realistic but still ASCII" one: the picture stays visible underneath
 detailed, true-colour letters. It uses the app's own *"Keep the image underneath"* feature. Raise **Image
 visibility** (`--set underlay=80`) for more photo, lower it for more ASCII. **`ascii`** is the pure-characters look
-(below). The other 18 looks are the app's own presets:
+(below). The other 19 looks are the app's own presets:
 
 ![The app's looks, rendered by this CLI](docs/looks.jpg)
 
@@ -169,12 +169,12 @@ hides what the app would hide (for example, edge strength only appears while "Tr
 
 | In the app | Here |
 | --- | --- |
-| 13 styles: classic, detailed, blocks, tiles, minimal, binary, braille, dots, dither, bricks, particle, film, custom | `--style`, `s`, or the panel; `insta-ascii --list styles` |
-| the preset **looks** rail (18 looks) | `--look <id>`, `l` / `L`; `--list looks`. Their settings are read from the live app, not copied. This CLI adds two: `photo` and `ascii` |
-| every slider, switch and choice (all 52 controls: detail, spacing, tile gaps, particles, film, tone, colour, background, contours, effects…) | the panel, or `--set key=value` for any of them; `--list settings` shows keys, ranges and defaults |
+| 14 styles: classic, detailed, blocks, tiles, minimal, binary, braille, dots, dither, bricks, particle, film, drift, custom | `--style`, `s`, or the panel; `insta-ascii --list styles` |
+| the preset **looks** rail (19 looks) | `--look <id>`, `l` / `L`; `--list looks`. Their settings are read from the live app, not copied. This CLI adds two: `photo` and `ascii` |
+| every slider, switch and choice (all 57 controls: detail, spacing, tile gaps, particles, film, drift, tone, colour, background, contours, effects…) | the panel, or `--set key=value` for any of them; `--list settings` shows keys, ranges and defaults |
 | palettes (7), colour modes (original / palette / mono), background modes (dark / black / paper / custom / clear) | `--palette`, `--color`, `--set bgMode=paper`, … |
 | effects: bloom, scanlines, curvature, chromatic aberration, vignette, grain, flicker, twinkle, animate | panel or `--set`. **Bloom, curvature and chromatic aberration are pixel effects**: image / blocks rendering only. Vignette, scanlines, grain and flicker are also emulated per cell in text |
-| particle and film styles | image / blocks only (they are not made of characters). In text rendering the CLI switches to blocks for you |
+| particle, film and drift styles | image / blocks only (they are not made of characters). In text rendering the CLI switches to blocks for you |
 | "Keep the image underneath", Compare | yes (text, image and blocks) |
 | Export image / video | `x` and `--once --out file.png` (PNG at export resolution); `r` records an MP4 |
 | Upload / Sample | `--file photo.jpg` or `--file clip.mp4`; `--url` for any page |
@@ -191,7 +191,7 @@ at 1920 px on the long side, recordings 1280 px). Recordings have no sound.
 | Option | Meaning | Default |
 | --- | --- | --- |
 | `--look <id>` | start from a look (`insta-ascii --list looks`) | `photo`, or `ascii` once you choose a style |
-| `-s, --style <id>` | any of the 13 styles | the look's |
+| `-s, --style <id>` | any of the 14 styles | the look's |
 | `--ramp <chars>` | your own ramp, light to dense | |
 | `-c, --color <mode>` | `source` `palette` `mono` `none` (none = plain text) | the look's |
 | `--palette <id>` | the app's palette | the look's |
@@ -320,7 +320,7 @@ quit instantly and silently when they cannot open an audio output. Typical messa
 - **Shape matching is measured, not proven to look better.** The metrics above favour it, a still crop at 1:1 shows the
   app's mapping with more tonal banding, and I had no way to put both in front of a real terminal's eyes. Flip it with
   `g` and decide. In a perfectly flat area it can also pick a directional character (`\`) where there is no direction.
-- Text rendering draws 11 of the 13 styles; `film` and `particle` need pixels. Text mode ignores the app's font,
+- Text rendering draws 11 of the 14 styles; `film`, `particle` and `drift` need pixels. Text mode ignores the app's font,
   letter spacing and non-normal blend modes (the terminal chooses its own font), and does not do bloom, curvature or
   chromatic aberration.
 - The reels page is driven like a person would: arrow keys, with the mouse wheel as a fallback.
@@ -340,10 +340,10 @@ quit instantly and silently when they cannot open an audio output. Typical messa
 npm test
 ```
 
-333 tests, about four minutes. Pure units: terminal composition, fitting, key parsing,
+336 tests, about three minutes. Pure units: terminal composition, fitting, key parsing,
 settings and the panel, the Kitty / iTerm2 encoders, export. Against the **live** Devault app (skipped if it can't be
 reached): that the catalog here matches the app's styles, palettes, looks and defaults; every text style's character
-set; **all 13 styles and all 20 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG
+set; **all 14 styles and all 21 looks drawing a real picture**; every pixel effect changing the output; exact PNG/JPEG
 sizes; Compare; the network lockdown. End to end: the CLI against a local reels feed and local media, and the
 interactive viewer in a **real pty** (needs `script`), including both image protocols. Also the login state machine
 against a mock login server, the cross-origin-video fallback and real `ffmpeg` recording (needs `ffmpeg`).
