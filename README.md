@@ -3,7 +3,8 @@
 Your Instagram **Reels feed, in the terminal**. The CLI signs in to your account, opens the Reels
 page, and renders the playing video with the
 [Devault ASCII generator](https://devault-ascii.pages.dev/ascii-generator/app/): its 14 styles, its
-preset looks and every one of its controls. **With sound.**
+preset looks and every one of its controls, plus a **pure-ASCII mode** that picks each character by shape for
+more detail. **With sound.**
 
 ![The same frame as the original, as the app's own canvas in the terminal (image mode), and as real characters (text mode)](docs/preview.jpg)
 
@@ -16,7 +17,7 @@ There are three ways to draw, and all three come from the app's own engine:
 
 | `--render` | What you see | Works in |
 | --- | --- | --- |
-| `text` | **real characters**, true colour, each cell tinted with the picture under it | every terminal |
+| `text` | **real characters** in true colour: tinted with the picture under each cell (`photo` look) or on a plain backdrop (`ascii` look) | every terminal |
 | `image` | **the app's actual canvas** at pixel resolution: every style, every effect | terminals that show images: kitty, Ghostty (kitty protocol); iTerm2, WezTerm, mintty (iTerm2 protocol) |
 | `blocks` | that same canvas as half-block pixels | any truecolor terminal |
 
@@ -28,6 +29,9 @@ visibility** (`--set underlay=80`) for more photo, lower it for more ASCII. **`a
 (below). The other 19 looks are the app's own presets:
 
 ![The app's looks, rendered by this CLI](docs/looks.jpg)
+
+<sub>A public-domain NASA photograph. The app's looks are drawn as the app's own canvas; `ascii` is this CLI's pure-ASCII look,
+shown as the shape-matched text it is made for (130 columns, scaled down here).</sub>
 
 ### Pure ASCII (`--style classic`) and where the extra detail comes from
 
@@ -97,8 +101,11 @@ app's mapping, and `--set sharpen=0..100` sets how hard it chases detail. Shape 
 - Each frame is read straight off the playing `<video>` as raw pixels (screenshots are the fallback;
   `--capture page` renders the whole page).
 - The hosted app is loaded, its UI script is not run, and its **engine** does the conversion with the app's own
-  settings. It only paints a canvas and has no text export, so the CLI reads the glyph grid from the engine,
+  settings. It only paints a canvas and has no text export, so for text the CLI reads the glyph grid from the engine,
   using the same glyph-to-character mapping the app uses for its own text output.
+- **Shape matching is the exception** (the ramp styles, on by default): the engine is only asked to sample each cell and
+  to rasterise the candidate characters, and `src/shapes.js` picks the characters here, using the app's own tone and
+  colour settings. `--glyphs brightness` goes back to the engine's grid.
 
 ## Requirements
 
@@ -145,7 +152,7 @@ insta-ascii
 
 | Key | Action |
 | --- | --- |
-| `j` / `↓`, `k` / `↑` | next / previous reel |
+| `j` / `n` / `↓` / `→`, `k` / `↑` / `←` | next / previous reel (the arrows change values instead while the settings panel is open) |
 | `space` | pause / resume |
 | `Tab` (or `m`) | the **settings panel**: every control of the app (below) |
 | `l` / `L` | next / previous look |
@@ -158,24 +165,27 @@ insta-ascii
 | `,` / `.` | move the sound earlier / later against the picture (50 ms) |
 | `s` `c` `p` `e` `i` | cycle style · colour · palette · outlines · invert |
 | `g` | choose letters by shape / by brightness (text rendering) |
-| `+` / `-` | more / less detail |
-| `q` | quit |
+| `+` (or `=`) / `-` | more / less detail |
+| `q` (or `Esc`) | quit |
 
 In the settings panel: `↑↓` select, `←→` change (`⇧←→` ×10), `Enter` edits text and colour fields, `d` resets a
 control to the app's default, `Tab` closes. It shows the same sections the app shows for the current style and
-hides what the app would hide (for example, edge strength only appears while "Trace edges" is on).
+hides what the app would hide (for example, edge strength only appears while "Trace edges" is on). It also has a
+**Text rendering** section for this CLI's own settings (below) and, with sound on, the *Sound*, *Volume* and
+*Sound delay* rows.
 
 ## Everything the app offers
 
 | In the app | Here |
 | --- | --- |
-| 14 styles: classic, detailed, blocks, tiles, minimal, binary, braille, dots, dither, bricks, particle, film, drift, custom | `--style`, `s`, or the panel; `insta-ascii --list styles` |
+| 14 styles: classic, detailed, blocks, tiles, minimal, binary, braille, dots, dither, bricks (`lego`), particle, film, drift, custom | `--style`, `s`, or the panel; `insta-ascii --list styles` |
 | the preset **looks** rail (19 looks) | `--look <id>`, `l` / `L`; `--list looks`. Their settings are read from the live app, not copied. This CLI adds two: `photo` and `ascii` |
 | every slider, switch and choice (all 57 controls: detail, spacing, tile gaps, particles, film, drift, tone, colour, background, contours, effects…) | the panel, or `--set key=value` for any of them; `--list settings` shows keys, ranges and defaults |
 | palettes (7), colour modes (original / palette / mono), background modes (dark / black / paper / custom / clear) | `--palette`, `--color`, `--set bgMode=paper`, … |
 | effects: bloom, scanlines, curvature, chromatic aberration, vignette, grain, flicker, twinkle, animate | panel or `--set`. **Bloom, curvature and chromatic aberration are pixel effects**: image / blocks rendering only. Vignette, scanlines, grain and flicker are also emulated per cell in text |
 | particle, film and drift styles | image / blocks only (they are not made of characters). In text rendering the CLI switches to blocks for you |
 | "Keep the image underneath", Compare | yes (text, image and blocks) |
+| *(this CLI only)* how characters are chosen, and how hard shape matching chases detail | `--glyphs shape\|brightness` or `g`; `--set sharpen=0..100`. Both are in the panel's *Text rendering* section and in `--list settings` (59 settings in all: the app's 57 plus these 2) |
 | Export image / video | `x` and `--once --out file.png` (PNG at export resolution); `r` records an MP4 |
 | Upload / Sample | `--file photo.jpg` or `--file clip.mp4`; `--url` for any page |
 
@@ -199,7 +209,7 @@ at 1920 px on the long side, recordings 1280 px). Recordings have no sound.
 | `--no-edges` · `--invert` | outline tracing off · invert brightness | |
 | `-w, --cols <n>` | Detail (columns), 20–400. In text it is also capped by what fits the terminal | the look's |
 | `--set <key=value>` | any app setting, repeatable | |
-| `--list <what>` | `looks` `styles` `palettes` `settings`, then exit | |
+| `--list <what>` | `looks` `styles` `palettes` `settings` `audio`, then exit | |
 | `--render <mode>` | `auto` `text` `image` `blocks` | `auto` |
 | `--graphics <proto>` | `auto` `kitty` `iterm2` | `auto` |
 | `--scale <n>` | image resolution multiplier, 0.2–3 | `1` |
@@ -214,10 +224,17 @@ at 1920 px on the long side, recordings 1280 px). Recordings have no sound.
 | `--out <file.png>` | with `--once`: also save the app's canvas as a PNG | |
 | `--file <path>` · `--url <url>` | a local image or video · any page, instead of Reels | |
 | `-u, --username <name>` | Instagram username | `INSTAGRAM_USERNAME` or prompt |
+| `--manual` | with `login`: sign in by hand in a visible browser window | off |
 | `--browser <name>` | `auto` `chrome` `chromium` | `auto` |
 | `--headed` · `--software-gl` | show the browser · allow software WebGL (headless, no GPU) | off |
 | `--app-url <url>` | the ASCII generator app | the Devault URL |
 | `--debug` | verbose logging; saves a screenshot on failure | off |
+
+Commands: `insta-ascii` (or `reels`) watches, `login [--manual]` signs in, `logout` forgets the session, `audio-test`
+checks the sound, and `--list <what>` prints a catalog.
+
+Environment: `INSTAGRAM_USERNAME` and `INSTAGRAM_PASSWORD` (sign-in without prompts), `INSTA_ASCII_HOME` (where the session,
+stills and debug files live instead of `~/.insta-ascii`), `NO_COLOR` (plain text).
 
 Run `insta-ascii --help` for the same list.
 
@@ -312,7 +329,8 @@ quit instantly and silently when they cannot open an audio output. Typical messa
   to look at: the tests decode what the CLI sends back into the original image and check the protocol framing
   against the specifications, but a real terminal may still behave differently. If a picture doesn't appear,
   `--render text` is the safe fallback.
-- **Speed depends on a GPU.** Text rendering costs about 70 ms a frame here. Image and blocks rendering run on the
+- **Speed depends on a GPU.** Text rendering costs about 80 ms a frame here (a portrait reel in a 58-70 row terminal; shape
+  matching costs the same as the app's mapping). Image and blocks rendering run on the
   browser's WebGL: with no GPU (this was developed in one such environment) the heavy looks take ~700 ms a frame at
   full size, so the viewer **lowers the image resolution automatically** to keep up with `--fps` (the HUD shows the
   percentage), reaching ~8 fps at 30 %. With a GPU the render itself should be far faster, but I could not measure
@@ -365,13 +383,17 @@ src/panel.js         the settings sidebar
 src/ascii.js         the bridge to the Devault app (+ network lockdown)
 src/shapes.js        shape-aware character choice for text rendering (the `ascii` look)
 src/engine-page.js   code that runs inside the app's page
-src/terminal.js      composing cells (tint, effects), fitting, half-blocks, full-screen drawing
+src/terminal.js      composing cells (tint, effects), fitting, cell shape, half-blocks, full-screen drawing
 src/protocols.js     Kitty / iTerm2 image protocols, terminal detection, cell size
 src/export.js        PNG stills and MP4 recording
 src/audio.js         finding a player, the player process, volume / mute / lip-sync delay
 src/audio-page.js    the sound tap that runs inside the Instagram page
 src/instagram.js     login, session check, feed navigation
 src/capture.js       getting frames out of the page
+src/browser.js       launching Chrome / Chromium with the saved profile
+src/keys.js          key parsing, raw-mode input, hidden prompts
+src/paths.js         where the saved session and debug files live (private folders, `INSTA_ASCII_HOME`)
+src/util.js          usage / friendly errors, the logger
 test/                unit, integration and end-to-end tests, plus a mock feed and mock login
 docs/                the images above (rendered from a public-domain NASA photograph)
 ```
